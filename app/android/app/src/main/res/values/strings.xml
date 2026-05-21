@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">氢氦跑</string>
+    <string name="title_activity_main">氢氦跑</string>
+    <string name="package_name">com.qinghaipao.app</string>
+    <string name="custom_url_scheme">com.qinghaipao.app</string>
+</resources>

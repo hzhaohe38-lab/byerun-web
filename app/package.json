@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.3",
+    "@capacitor/cli": "^8.3.3",
+    "@capacitor/core": "^8.3.3",
     "@fortawesome/fontawesome-free": "^7.1.0",
     "@tailwindcss/vite": "^4.1.17",
     "axios": "^1.10.0",

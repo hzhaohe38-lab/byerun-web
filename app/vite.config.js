@@ -25,17 +25,20 @@ export default defineConfig(({ mode }) => {
       cors: true,
       proxy: {
         '/devproxy': {
-          target: 'https://run-lb.tanmasports.com/v1',
-          secure: false,
+          target: 'http://localhost:3000',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/devproxy/, ''),
         },
-        '/autorunserver': {
-          target: env.VITE_AUTORUN_SERVER_BASE,
-          changeOrigin: true,
-          secure: false,
-          rewrite: (path) => path.replace(/^\/autorunserver/, ''),
-        },
+        ...(env.VITE_AUTORUN_SERVER_BASE
+          ? {
+              '/autorunserver': {
+                target: env.VITE_AUTORUN_SERVER_BASE,
+                changeOrigin: true,
+                secure: false,
+                rewrite: (path) => path.replace(/^\/autorunserver/, ''),
+              },
+            }
+          : {}),
       },
     },
   };

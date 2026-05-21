@@ -143,6 +143,80 @@
           </div>
         </div>
       </transition>
+
+      <!-- 自动签到签退 -->
+      <div class="mt-4 flex items-center justify-between px-1">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-gray-400">自动签到签退</span>
+          <span :class="['text-[10px] font-medium px-2 py-0.5 rounded-full border', autoSignClass(autoSignStatus)]">
+            {{ autoSignLabel(autoSignStatus) }}
+          </span>
+          <span
+            v-if="autoSignStatus === 'scheduled' && nextScheduledInfo"
+            class="text-[10px] text-gray-600"
+          >
+            {{ nextScheduledInfo }}
+          </span>
+        </div>
+        <button
+          type="button"
+          class="relative w-9 h-5 rounded-full transition-colors"
+          :class="autoSignEnabled ? 'bg-emerald-500' : 'bg-stone-800'"
+          @click="toggleAutoSign"
+        >
+          <div
+            class="absolute top-1 w-3 h-3 rounded-full transition-all"
+            :class="autoSignEnabled ? 'left-5 bg-white' : 'left-1 bg-stone-500'"
+          ></div>
+        </button>
+      </div>
+
+      <!-- 自动签到日志 -->
+      <transition name="fade-slide">
+        <div v-if="autoSignEnabled && autoSignLog.length > 0" class="mt-2 px-1">
+          <div
+            v-for="entry in autoSignLog.slice(0, 5)"
+            :key="entry.id"
+            class="flex items-center gap-2 py-1 text-[10px] text-gray-500 border-b border-white/5 last:border-b-0"
+          >
+            <span
+              class="shrink-0 w-8 text-center font-medium"
+              :class="entry.ok ? 'text-emerald-500' : 'text-rose-400'"
+            >
+              {{ entry.ok ? '✓' : '✗' }}{{ entry.action }}
+            </span>
+            <span class="truncate">{{ entry.title }}</span>
+            <span v-if="entry.msg" class="shrink-0 text-stone-600">/ {{ entry.msg }}</span>
+            <span class="shrink-0 ml-auto">{{ entry.time }}</span>
+          </div>
+          <div class="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              class="text-[9px] text-gray-600 hover:text-gray-400 transition-colors"
+              @click="clearAutoSignLogs"
+            >
+              清除日志
+            </button>
+            <span class="text-stone-700">|</span>
+            <button
+              type="button"
+              class="text-[9px] text-cyan-700 hover:text-cyan-500 transition-colors"
+              @click="runAutoSignCheck"
+            >
+              手动检查
+            </button>
+          </div>
+        </div>
+        <div v-else-if="autoSignEnabled && autoSignLog.length === 0" class="mt-2 px-1">
+          <button
+            type="button"
+            class="text-[9px] text-cyan-700 hover:text-cyan-500 transition-colors"
+            @click="runAutoSignCheck"
+          >
+            手动检查签到状态
+          </button>
+        </div>
+      </transition>
     </section>
 
     <section v-if="activeMainTab === 'history'" class="mt-3 grid grid-cols-2 gap-2">
@@ -308,6 +382,11 @@
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api } from '@/composables/useApi';
 import { useDataStore } from '@/composables/useDataStore';
+import {
+  useClubAutoSign,
+  autoSignLabel,
+  autoSignClass,
+} from '@/composables/useClubAutoSign';
 
 const MAIN_TABS = [
   { key: 'activities', label: '活动列表' },
@@ -387,6 +466,18 @@ const signPendingType = ref('');
 const loading = ref(false);
 const clubActionPendingMap = ref({});
 const datePickerRef = ref(null);
+
+const {
+  enabled: autoSignEnabled,
+  status: autoSignStatus,
+  signLog: autoSignLog,
+  lastError: autoSignError,
+  nextScheduledInfo,
+  toggle: toggleAutoSign,
+  clearLogs: clearAutoSignLogs,
+  refresh: refreshAutoSign,
+  checkAndExec: runAutoSignCheck,
+} = useClubAutoSign();
 
 let ensureAuthPromise = null;
 
@@ -1299,6 +1390,7 @@ async function handleSignTask(signType) {
 
     showMessage(resolveResponseMessage(data, `${actionText}成功`), 'success');
     await Promise.all([loadSignTask(), loadCurrentList()]);
+    refreshAutoSign();
   } catch (error) {
     console.error('handleSignTask failed:', error);
     showMessage('签到/签退操作异常', 'error');
@@ -1343,6 +1435,7 @@ async function handleClubAction(item, type) {
     if (activeMainTab.value === 'history') refreshTasks.push(loadSummary());
 
     await Promise.all(refreshTasks);
+    refreshAutoSign();
   } catch (error) {
     console.error('handleClubAction failed:', error);
     showMessage('娱乐部操作异常', 'error');

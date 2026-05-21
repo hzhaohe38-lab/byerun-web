@@ -11,7 +11,7 @@
             class="w-full h-full object-contain invert brightness-0 opacity-80 hover:brightness-0 hover:opacity-90"
           />
         </div>
-        <span class="text-sm text-gray-600 font-medium font-mono">UNORUN</span>
+        <span class="text-sm text-gray-600 font-medium font-mono">氢氦跑</span>
       </div>
       <div class="border border-dashed border-gray-600 mb-4"></div>
       <form @submit.prevent="handleSubmit" @focusout="handleInputBlur">
