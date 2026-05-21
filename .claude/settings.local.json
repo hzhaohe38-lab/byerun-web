@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(node *)",
+      "Bash(npx vite *)",
+      "Bash(git show *)",
+      "Bash(cmd *)",
+      "Bash(taskkill *)",
+      "Bash(curl *)",
+      "Bash(cp \"D:/byerun-web/img/yjtp11.png\" \"D:/byerun-web/app/public/logo.png\")",
+      "Bash(cp \"D:/byerun-web/img/yjtp11.png\" \"D:/byerun-web/app/src/assets/logo.png\")",
+      "Bash(cp \"D:/byerun-web/img/favicon.ico\" \"D:/byerun-web/app/public/favicon.ico\")",
+      "Bash(npm run *)",
+      "Bash(npx cap *)",
+      "Bash(pip3 list *)",
+      "Bash(pip3 install *)",
+      "Bash(chmod +x gradlew)",
+      "Bash(./gradlew assembleDebug)",
+      "Read(//c/Users/zhaohe/.gradle/wrapper/dists/**)",
+      "Read(//c/Users/zhaohe/Documents/gradle-8.14.5-all/gradle-8.14.5/**)",
+      "Bash(gradle assembleDebug)",
+      "Read(//c/Program Files/Java//**)",
+      "Read(//c/Java//**)",
+      "Bash(netstat -ano)",
+      "Bash(powershell -Command \"Stop-Process -Id 37052 -Force\")",
+      "Bash(echo \"Server PID: $!\")"
+    ]
+  }
+}

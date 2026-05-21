@@ -1,13 +1,13 @@
 <p align="center">
   <a href="https://byerun.pages.dev" target="_blank" rel="noopener noreferrer">
-    <img width="160" height="160" src="./app/public/favicon.ico" alt="Byerun">
+    <img width="160" height="160" src="./app/public/favicon.ico" alt="氢氦跑">
   </a>
 </p>
 
-<h1 align="center"/>Byerun <sup><em>web</em></sup></h1>
+<h1 align="center"/>氢氦跑 <sup><em>web</em></sup></h1>
 
 <p align="center">
-Goodbye Unirun - 校园跑助手🏃‍♂️
+氢氦跑 - 校园跑助手🏃‍♂️
 </p>
 
 <p align="center">
@@ -33,8 +33,8 @@ Goodbye Unirun - 校园跑助手🏃‍♂️
 
 | 部署平台   |                                     |                                     |
 | ---------- | ----------------------------------- | ----------------------------------- |
-| Cloudflare | [Byerun](https://byerun.pages.dev)  | [Unirun](https://unirun.pages.dev)  |
-| Vercel     | [Byerun](https://byerun.vercel.app) | [Unirun](https://unirun.vercel.app) |
+| Cloudflare | [氢氦跑](https://byerun.pages.dev)  | [氢氦跑](https://unirun.pages.dev)  |
+| Vercel     | [氢氦跑](https://byerun.vercel.app) | [氢氦跑](https://unirun.vercel.app) |
 
 ## 本地构建
 
@@ -93,7 +93,7 @@ graph TD;
 
 
 
-    A([ByerunWeb]):::process -->|Direct Request| U([UnirunAPI]):::process
+    A([氢氦跑Web]):::process -->|Direct Request| U([氢氦跑API]):::process
 
     U --> |Cross - Origin Restriction| E([Request Failed]):::error
 
@@ -116,4 +116,4 @@ graph TD;
 
 ## 许可
 
-Byerun 基于 [CC BY-NC License, Version 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 发布。
+氢氦跑 基于 [CC BY-NC License, Version 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 发布。
