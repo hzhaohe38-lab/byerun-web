@@ -3,7 +3,7 @@
 export const appConfig = {
   appVersion: '1.8.3',
   api: {
-    baseUrl: vBaseUrl || '/devproxy',
+    baseUrl: import.meta.env.PROD ? (vBaseUrl || '') : (vBaseUrl || '/devproxy'),
     endpoints: {
       login: '/auth/login/password',
       token: '/auth/query/token',

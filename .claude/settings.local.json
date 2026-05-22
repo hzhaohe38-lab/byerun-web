@@ -35,7 +35,11 @@
       "Bash(vercel deploy *)",
       "Bash(vercel logs *)",
       "Bash(vercel inspect *)",
-      "Bash(npm view *)"
+      "Bash(npm view *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(vercel project *)",
+      "Bash(ping -c 2 byerun-web-gamma.vercel.app)"
     ]
   }
 }
