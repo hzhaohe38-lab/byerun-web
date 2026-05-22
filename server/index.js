@@ -1,5 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
+const https = require('https');
+const http = require('http');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const morgan = require('morgan');
 const { createLogger, transports, format } = require('winston');
@@ -402,46 +404,73 @@ if (!isVercel) {
 
 // ============================================================
 
+// Proxy all unmatched requests to the TanMasports backend
+// Uses Node.js built-in https module (instead of node-fetch) and
+// HTTP/1.1 to bypass Alibaba Cloud WAF IP-based blocking.
 app.all('*', async (req, res) => {
     const url = new URL(req.originalUrl, `http://${req.headers.host}`);
     const backendUrl = 'https://run-lb.tanmasports.com/v1' + url.pathname + url.search;
+    const backend = new URL(backendUrl);
 
     logger.info(`Forwarding request to: ${backendUrl}`);
 
-    // Forward only the headers the TanMasports backend expects, plus
-    // set a mobile-app-like User-Agent so Alibaba WAF doesn't block.
+    // Collect headers to forward — essential ones from original request
+    // plus a mobile-app User-Agent.
     const forwardHeaders = {
+      'Content-Type': 'application/json',
       'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.230905.011)',
       'Accept': 'application/json',
-      'Content-Type': 'application/json',
     };
-    const passThrough = ['content-type', 'appkey', 'sign', 'token'];
-    for (const key of passThrough) {
-      if (req.headers[key]) {
-        forwardHeaders[key] = req.headers[key];
-      }
+    const passthrough = ['content-type', 'appkey', 'sign', 'token', 'user-agent', 'accept', 'accept-language', 'accept-encoding'];
+    for (const key of passthrough) {
+      const val = req.headers[key.toLowerCase()] || req.headers[key];
+      if (val) forwardHeaders[key] = Array.isArray(val) ? val.join(', ') : val;
     }
 
-    const init = {
-        method: req.method,
-        headers: forwardHeaders,
-        body: req.method === 'GET' ? null : JSON.stringify(req.body)
+    const body = req.method === 'GET' ? null : JSON.stringify(req.body);
+    const bodyBuffer = body ? Buffer.from(body, 'utf-8') : null;
+
+    const options = {
+      hostname: backend.hostname,
+      port: 443,
+      path: backend.pathname + backend.search,
+      method: req.method,
+      headers: {
+        ...forwardHeaders,
+        'Content-Length': bodyBuffer ? bodyBuffer.length : 0,
+      },
+      rejectUnauthorized: true,
     };
 
     try {
-        const response = await fetch(backendUrl, init);
-        const body = await response.text();
+      const proxyReq = https.request(options, (proxyRes) => {
+        const responseHeaders = { ...proxyRes.headers };
+        responseHeaders['Access-Control-Allow-Origin'] = '*';
+        responseHeaders['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+        responseHeaders['Access-Control-Allow-Headers'] = '*';
+        delete responseHeaders['set-cookie'];
 
-        res.set({
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers': '*'
+        let responseBody = '';
+        proxyRes.on('data', (chunk) => { responseBody += chunk.toString(); });
+        proxyRes.on('end', () => {
+          res.writeHead(proxyRes.statusCode || 500, responseHeaders);
+          res.end(responseBody);
+          logger.info(`Proxy ${req.originalUrl} → ${proxyRes.statusCode}`);
         });
+      });
 
-        res.status(response.status).send(body);
+      proxyReq.on('error', (error) => {
+        logger.error(`Proxy error for ${req.originalUrl}: ${error.message}`);
+        if (!res.headersSent) {
+          res.status(500).json({ code: 1, msg: 'Proxy error: ' + error.message });
+        }
+      });
+
+      if (bodyBuffer) proxyReq.write(bodyBuffer);
+      proxyReq.end();
     } catch (error) {
-        logger.error(`Error during fetch: ${error.message}`);
-        res.status(500).send('Internal Server Error');
+      logger.error(`Error during proxy to ${backendUrl}: ${error.message}`);
+      res.status(500).send('Internal Server Error');
     }
 });
 
