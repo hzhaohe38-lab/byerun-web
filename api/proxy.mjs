@@ -29,7 +29,7 @@ export default async (req) => {
   // ================================================================
   // Diagnostic endpoint — test what TanMasports actually returns
   // ================================================================
-  if (pathname === '/api/proxy-test') {
+  if (pathname === '/api/check') {
     const testUrl = 'https://run-lb.tanmasports.com/v1/auth/login/password';
     const testBody = {
       appVersion: '1.8.3',
