@@ -407,13 +407,18 @@ app.all('*', async (req, res) => {
 
     logger.info(`Forwarding request to: ${backendUrl}`);
 
-    // Only forward essential headers — strip browser-specific headers
-    // that the backend load balancer rejects (405)
+    // Forward all headers except hop-by-hop headers and browser-specific referer
     const forwardHeaders = {};
-    const allowed = ['content-type', 'appkey', 'sign', 'token'];
-    for (const key of allowed) {
-      if (req.headers[key]) {
-        forwardHeaders[key] = req.headers[key];
+    const skipHeaders = new Set([
+      'host', 'connection', 'keep-alive', 'transfer-encoding', 'expect',
+      'upgrade', 'proxy-authorization', 'proxy-authenticate',
+      'x-vercel-id', 'x-vercel-cache', 'x-vercel-trace',
+      'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
+      'x-real-ip', 'cf-connecting-ip', 'cf-ray', 'cf-worker',
+    ]);
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (!skipHeaders.has(key.toLowerCase()) && value) {
+        forwardHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
       }
     }
 
