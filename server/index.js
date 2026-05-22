@@ -9,15 +9,12 @@ const app = express();
 const port = 3000;
 const isVercel = process.env.VERCEL === '1';
 
-// ---- Vercel KV / Upstash Redis storage (only used when deployed) ----
+// ---- Upstash Redis storage (only used when deployed) ----
 let kv = null;
 if (isVercel) {
   try {
-    const { createClient } = require('@vercel/kv');
-    kv = createClient({
-      url: process.env.KV_URL || process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
+    const { Redis } = require('@upstash/redis');
+    kv = Redis.fromEnv();
   } catch (e) {
     console.error('[KV] init failed:', e.message);
   }
