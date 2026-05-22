@@ -1,15 +1,30 @@
 import { ref, onUnmounted } from 'vue';
 import { api } from './useApi';
 import { useDataStore } from './useDataStore';
-import { genSign } from '@/utils/sign';
-import { appConfig } from '@/utils/config';
 import { getSessionToken } from '@/utils/authStorage';
-
-const SW_PATH = '/sw.js';
 
 const STORAGE_KEY = 'unirun.club_auto_sign';
 const POLL_INTERVAL = 30 * 1000;
 const LEAD_MINUTES = 30;
+const AUTO_SIGN_API = '/api/auto-sign';
+
+// ---- module-level state (survives component unmount) ----
+
+const enabled = ref(false);
+const status = ref('idle');
+const signLog = ref([]);
+const lastError = ref('');
+const nextScheduledInfo = ref('');
+
+let _pollTimer = null;
+let _scheduleTimer = null;
+const _executedSession = new Map(); // key -> timestamp
+let _onSignResult = null; // callback set by component for toast notifications
+
+// Store refs (lazily set by composable in setup context — not at module level)
+let _studentIdRef = null;
+let _tokenRef = null;
+let _schoolIdRef = null;
 
 // ---- time helpers ----
 
@@ -88,483 +103,488 @@ function formatShort(d) {
   return `${m}-${day} ${h}:${min}`;
 }
 
-// ---- composable ----
+function formatDateForApi(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
-export function useClubAutoSign() {
-  const { studentId, token, schoolId } = useDataStore();
+// ---- persistence ----
 
-  const enabled = ref(false);
-  const status = ref('idle');
-  const signLog = ref([]);
-  const lastError = ref('');
-  const nextScheduledInfo = ref('');
-
-  let pollTimer = null;
-  let scheduleTimer = null;
-  const executedInSession = new Set();
-
-  // Restore persisted state
+function persistState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const p = JSON.parse(raw);
-      enabled.value = p.enabled === true;
-      if (Array.isArray(p.executed)) p.executed.forEach((k) => executedInSession.add(k));
-    }
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ enabled: enabled.value, executed: [..._executedSession.entries()] }),
+    );
   } catch (e) { /* */ }
+}
 
-  function persistState() {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ enabled: enabled.value, executed: [...executedInSession] }),
-      );
-    } catch (e) { /* */ }
+// ---- cleanup ----
+
+/** Remove executed-session entries older than 48 hours to prevent unbounded growth */
+function cleanupExecutedSession() {
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  for (const [key, ts] of _executedSession.entries()) {
+    if (ts < cutoff) _executedSession.delete(key);
   }
+}
 
-  function clearTimers() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+// Restore persisted state
+try {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    const p = JSON.parse(raw);
+    enabled.value = p.enabled === true;
+    if (Array.isArray(p.executed)) {
+      p.executed.forEach(([k, ts]) => _executedSession.set(k, ts));
     }
-    if (scheduleTimer) {
-      clearTimeout(scheduleTimer);
-      scheduleTimer = null;
-    }
+    cleanupExecutedSession();
   }
+} catch (e) { /* */ }
 
-  function addLog(action, title, ok, msg) {
-    signLog.value.unshift({
-      id: Date.now() + Math.random(),
-      action,
-      title: title || '未知活动',
-      time: new Date().toLocaleString(),
-      ok,
-      msg: msg || '',
-    });
-    if (signLog.value.length > 50) signLog.value = signLog.value.slice(0, 50);
-  }
+// ---- backend scheduling helpers ----
 
-  function canExec() {
-    return !!(studentId?.value && token?.value);
-  }
-
-  // ---- Service Worker ----
-
-  let swRegistration = null;
-  let swReady = false;
-
-  async function registerSw() {
-    if (swReady || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
-    try {
-      swRegistration = await navigator.serviceWorker.register(SW_PATH);
-      swReady = true;
-      // Request notification permission (needed for SW to show sign results)
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-      // Listen for messages from SW
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data?.type === 'SIGN_RESULT') {
-          const p = event.data.payload;
-          addLog(p.signType === '1' ? '签到' : '签退', p.activityName || '', p.success, p.msg);
-          if (p.success && p.signType === '2') status.value = 'completed';
-          if (p.success && p.signType === '1') status.value = 'signed_in';
-        }
-      });
-    } catch (e) {
-      // SW not supported, in-page timer works fine
-    }
-  }
-
-  function sendToSw(info) {
-    if (!swReady || !swRegistration?.active) return;
-    swRegistration.active.postMessage(info);
-  }
-
-  function cancelSwTasks() {
-    if (!swReady) return;
-    sendToSw({ type: 'CANCEL_ALL_SIGNS' });
-  }
-
-  function scheduleSwSign(item, signTimeMs) {
-    const aid = Number(item.clubActivityId || item.activityId || 0);
-    if (!aid) return;
-    const rc = computeRequestConfig(aid, item.latitude || '', item.longitude || '', '1', studentId.value);
-    sendToSw({
-      type: 'SCHEDULE_SIGN',
-      payload: {
-        activityId: aid,
-        signType: '1',
-        activityName: item.activityName || '',
-        targetTimestamp: signTimeMs,
-        requestConfig: rc,
-      },
-    });
-  }
-
-  function computeRequestConfig(activityId, latitude, longitude, signType, studentIdVal) {
-    const body = {
-      activityId: Number(activityId),
-      latitude: String(latitude || ''),
-      longitude: String(longitude || ''),
-      signType,
-      studentId: studentIdVal,
-    };
-    const sign = genSign(null, body);
+async function scheduleTasksOnBackend(tasks) {
+  try {
     const token = getSessionToken();
-    return {
-      url: appConfig.api.baseUrl + appConfig.api.endpoints.clubSignAction,
+    await fetch(AUTO_SIGN_API + '/schedule', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        appKey: appConfig.auth.appKey,
-        sign,
-        ...(token ? { token } : {}),
-      },
-      body,
-    };
-  }
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tasks, studentId: _studentIdRef.value, token }),
+    });
+  } catch (e) { /* backend unreachable — local polling will still try */ }
+}
 
-  // ---- exec ----
+async function cancelTasksOnBackend() {
+  try {
+    await fetch(AUTO_SIGN_API + '/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentId: _studentIdRef?.value }),
+    });
+  } catch (e) { /* */ }
+}
 
-  async function execSign(signType, task) {
-    const aid = Number(task.activityId);
-    const key = `${signType}-${aid}`;
-    if (executedInSession.has(key)) return { skipped: true };
-    executedInSession.add(key);
-    persistState();
-
-    const label = signType === '1' ? '签到' : '签退';
-    const name = task.activityName || aid;
-
-    try {
-      const resp = await api.signInOrSignBack({
-        activityId: aid,
+async function execSignOnBackend(signType, task) {
+  try {
+    const token = getSessionToken();
+    const resp = await fetch(AUTO_SIGN_API + '/exec-now', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: _studentIdRef.value,
+        token,
+        activityId: Number(task.activityId),
         latitude: String(task.latitude || ''),
         longitude: String(task.longitude || ''),
         signType,
-        studentId: studentId.value,
-      });
-      const d = resp?.data;
-      const ok = d?.code === 10000;
-      addLog(label, name, ok, d?.msg || d?.message || '');
-      return { success: ok, msg: d?.msg || d?.message };
-    } catch (e) {
-      // Network error — don't mark executed, allow retry
-      executedInSession.delete(key);
+        activityName: task.activityName || '',
+      }),
+    });
+    return await resp.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---- exec ----
+
+function addLog(action, title, ok, msg) {
+  signLog.value.unshift({
+    id: Date.now() + Math.random(),
+    action,
+    title: title || '未知活动',
+    time: new Date().toLocaleString(),
+    ok,
+    msg: msg || '',
+  });
+  if (signLog.value.length > 50) signLog.value = signLog.value.slice(0, 50);
+}
+
+function canExec() {
+  return !!(_studentIdRef?.value && _tokenRef?.value);
+}
+
+async function execSign(signType, task) {
+  const aid = Number(task.activityId);
+  const key = `${signType}-${aid}`;
+  if (_executedSession.has(key)) return { skipped: true };
+  _executedSession.set(key, Date.now());
+  persistState();
+
+  const label = signType === '1' ? '签到' : '签退';
+  const name = task.activityName || aid;
+
+  try {
+    const result = await execSignOnBackend(signType, task);
+    if (!result) {
+      _executedSession.delete(key);
       persistState();
-      addLog(label, name, false, e.message);
-      return { success: false, msg: e.message, networkError: true };
+      addLog(label, name, false, '后端通信失败');
+      return { success: false, msg: '后端通信失败', networkError: true };
     }
-  }
-
-  /** Check today's sign task and execute if time is right */
-  async function checkAndExec() {
-    if (!canExec()) return;
-
-    try {
-      const resp = await api.queryClubSignStatus(studentId.value);
-      const d = resp?.data;
-      if (d?.code !== 10000) {
-        return;
-      }
-
-      const task = d.response;
-      // Valid today's task must have activityId AND signInTime
-      if (!task || !task.activityId || !task.signInTime) {
-        await scheduleFuture();
-        return;
-      }
-
-      const aid = Number(task.activityId);
-      const inDone = String(task.signInStatus ?? '') === '1';
-      const outDone = String(task.signBackStatus ?? '') === '1';
-
-      // Server confirms both done
-      if (inDone && outDone) {
-        status.value = 'completed';
-        executedInSession.add(`1-${aid}`);
-        executedInSession.add(`2-${aid}`);
-        persistState();
-        addLog('检查', task.activityName || aid, true, '今日签到已完成');
-        return;
-      }
-
-      // -- Sign-in --
-      if (!inDone && !executedInSession.has(`1-${aid}`)) {
-        if (isTimeReached(task.signInTime)) {
-          const r = await execSign('1', task);
-          if (r.success) status.value = 'signed_in';
-          else if (r.networkError) status.value = 'monitoring';
-          else status.value = 'error';
-        } else {
-          status.value = 'monitoring';
-          addLog('检查', task.activityName || aid, true, `等待签到(${task.signInTime})`);
-        }
-        return;
-      }
-
-      // -- Sign-out --
-      if (inDone && !outDone && !executedInSession.has(`2-${aid}`)) {
-        const outTime = task.signBackTime || task.signBackLimitTime;
-        if (!outTime || isTimeReached(outTime)) {
-          const r = await execSign('2', task);
-          status.value = r.success ? 'completed' : 'error';
-        } else {
-          status.value = 'signed_in';
-        }
-        return;
-      }
-
-      status.value = 'completed';
-    } catch (e) {
-      console.error('[AutoSign] check error:', e);
-      status.value = 'error';
-      lastError.value = e.message;
+    const ok = result.ok === true;
+    addLog(label, name, ok, result.msg || '');
+    if (_onSignResult) {
+      const msg = `${name} ${label}${ok ? '成功' : '失败'}${result.msg ? '：' + result.msg : ''}`;
+      _onSignResult(ok, msg);
     }
+    return { success: ok, msg: result.msg || '' };
+  } catch (e) {
+    _executedSession.delete(key);
+    persistState();
+    addLog(label, name, false, e.message);
+    return { success: false, msg: e.message, networkError: true };
   }
+}
 
-  /** Try to extract an array from various API response shapes */
-  function extractList(raw) {
-    if (Array.isArray(raw)) return raw;
-    if (!raw || typeof raw !== 'object') return [];
-    const keys = ['records', 'list', 'rows', 'items', 'activityList'];
-    for (const key of keys) {
-      if (Array.isArray(raw[key])) return raw[key];
-    }
-    return [];
-  }
+/** Check today's sign task and execute if time is right */
+async function checkAndExec() {
+  if (!canExec()) return;
 
-  /** Try queryClubInfo for future dates to find registered activities */
-  async function fetchRegisteredFromClubInfo() {
-    if (!schoolId?.value) {
-      console.warn('[AutoSign] no schoolId available');
-      return [];
-    }
-    const results = [];
-    const today = new Date();
-    console.log('[AutoSign] fetchRegisteredFromClubInfo starting, schoolId:', schoolId.value);
-
-    for (let i = 0; i < 14; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      const dateStr = formatDateForApi(date);
-      try {
-        const resp = await api.queryClubInfo({
-          queryTime: dateStr,
-          schoolId: schoolId.value,
-          studentId: studentId.value,
-          pageNo: 1,
-          pageSize: 20,
-        });
-        const d = resp?.data;
-        console.log(`[AutoSign] queryClubInfo ${dateStr}: code=${d?.code}, hasResponse=`, !!d?.response);
-        if (d?.code !== 10000) continue;
-        const dayList = extractList(d.response);
-        console.log(`[AutoSign] ${dateStr} items:`, dayList.length, dayList.length > 0 ? Object.keys(dayList[0]) : 'empty', dayList.map(item => ({ id: item.activityId || item.clubActivityId, name: item.activityName, optStatus: item.optionStatus, yymmdd: item.yymmdd, mmdd: item.mmdd, startTime: item.startTime })));
-        for (const item of dayList) {
-          if (String(item.optionStatus) === '1') {
-            console.log(`[AutoSign] FOUND registered activity on ${dateStr}:`, item.activityName, item.activityId, 'yymmdd:', item.yymmdd, 'startTime:', item.startTime);
-            results.push(item);
-          }
-        }
-      } catch (e) {
-        console.warn(`[AutoSign] queryClubInfo ${dateStr} error:`, e);
-      }
-    }
-    console.log('[AutoSign] fetchRegisteredFromClubInfo results:', results.length, results.map(r => ({ name: r.activityName, date: r.yymmdd, time: r.startTime })));
-    return results;
-  }
-
-  /** Find next future registered activity and schedule wake-up */
-  async function scheduleFuture() {
-    try {
-      let list = [];
-
-      // 1) Try queryMyPendingClub (user's registered activities)
-      try {
-        const resp = await api.queryMyPendingClub(studentId.value, 1, 20);
-        const d = resp?.data;
-        console.log('[AutoSign] queryMyPendingClub: code=', d?.code, 'hasResponse=', !!d?.response);
-        if (d?.code === 10000) {
-          list = extractList(d.response);
-          console.log('[AutoSign] queryMyPendingClub items:', list.length, list.length > 0 ? Object.keys(list[0]) : 'empty', list.map(item => ({ id: item.activityId, name: item.activityName, optStatus: item.optionStatus, yymmdd: item.yymmdd, mmdd: item.mmdd, startTime: item.startTime })));
-        }
-      } catch (e) {
-        console.warn('[AutoSign] queryMyPendingClub failed, trying fallback', e);
-      }
-
-      // 2) If empty, try queryClubInfo for upcoming dates (registered activities)
-      if (list.length === 0) {
-        console.log('[AutoSign] queryMyPendingClub empty, trying queryClubInfo fallback');
-        list = await fetchRegisteredFromClubInfo();
-      }
-
-      if (list.length === 0) {
-        console.log('[AutoSign] no activities found from any source');
-        nextScheduledInfo.value = '暂无活动';
-        addLog('系统', '空闲', true, '当前没有已报名的活动');
-        return;
-      }
-
-      const now = Date.now();
-      let bestMs = Infinity;
-      let bestInfo = '';
-      let bestItem = null;
-      let foundAny = false;
-
-      for (const item of list) {
-        const date = parseYymmdd(item.yymmdd || item.activityDate || item.date || item.scheduleDate || '')
-          || parseMmdd(item.mmdd || '');
-        if (!date) {
-          console.log('[AutoSign] skip item - no valid date:', item.activityName, 'date fields:', { yymmdd: item.yymmdd, activityDate: item.activityDate, date: item.date, scheduleDate: item.scheduleDate, mmdd: item.mmdd });
-          continue;
-        }
-        const timeStr = item.startTime || item.activityStartTime || item.start || item.beginTime || '';
-        const st = parseTimeStr(timeStr);
-        if (!st) {
-          console.log('[AutoSign] skip item - no valid time:', item.activityName, 'time fields:', { startTime: item.startTime, activityStartTime: item.activityStartTime, start: item.start, beginTime: item.beginTime });
-          continue;
-        }
-        foundAny = true;
-
-        const monitorStart = new Date(date);
-        monitorStart.setHours(st.h, st.m, 0, 0);
-        monitorStart.setMinutes(monitorStart.getMinutes() - LEAD_MINUTES);
-        const ms = monitorStart.getTime() - now;
-        console.log('[AutoSign] item:', item.activityName, 'date:', date, 'time:', timeStr, 'ms to monitor:', ms);
-        if (ms <= 0) {
-          console.log('[AutoSign] skip item - already past monitor time');
-          continue;
-        }
-
-        if (ms < bestMs) {
-          bestMs = ms;
-          bestInfo = `${date.getMonth() + 1}-${date.getDate()} ${timeStr}`;
-          bestItem = { item, signTimeMs: monitorStart.getTime() + LEAD_MINUTES * 60000 };
-        }
-      }
-
-      console.log('[AutoSign] schedule result: foundAny=', foundAny, 'bestMs=', bestMs, 'bestInfo=', bestInfo);
-
-      if (bestMs < Infinity) {
-        nextScheduledInfo.value = bestInfo;
-        status.value = 'scheduled';
-        addLog('系统', '已计划', true, `将在 ${bestInfo} 自动签到`);
-        clearTimers();
-        scheduleTimer = setTimeout(() => {
-          scheduleTimer = null;
-          startPolling();
-          checkAndExec();
-        }, bestMs);
-
-        // Also send to Service Worker for background execution
-        if (bestItem) {
-          scheduleSwSign(bestItem.item, bestItem.signTimeMs);
-        }
-      } else {
-        nextScheduledInfo.value = foundAny ? '等签到时间' : '暂无活动';
-        addLog('系统', foundAny ? '等待中' : '空闲', true, foundAny ? '已报名活动，等待签到时间' : '当前没有已报名的活动');
-      }
-    } catch (e) {
-      console.error('[AutoSign] schedule future error:', e);
-      nextScheduledInfo.value = '查询失败';
-      addLog('系统', '错误', false, '查询已报名活动失败');
-    }
-  }
-
-  function formatDateForApi(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-
-  function startPolling() {
-    if (pollTimer) return;
-    status.value = 'monitoring';
-    pollTimer = setInterval(checkAndExec, POLL_INTERVAL);
-  }
-
-  /** Main entry — decide what to do now */
-  async function start() {
-    if (!canExec()) {
-      enabled.value = false;
-      persistState();
+  try {
+    const resp = await api.queryClubSignStatus(_studentIdRef.value);
+    const d = resp?.data;
+    if (d?.code !== 10000) {
       return;
     }
 
-    enabled.value = true;
-    clearTimers();
-    persistState();
-    status.value = 'monitoring'; // show active state immediately, refine via API
+    const task = d.response;
+    // Guard: if we already tracked completion, don't re-enter schedule
+    if (status.value === 'completed' && !task) return;
+    if (!task || !task.activityId || !task.signInTime) {
+      await scheduleFuture();
+      return;
+    }
 
-    // Register Service Worker for background scheduling
-    registerSw();
+    const aid = Number(task.activityId);
+    const inDone = String(task.signInStatus ?? '') === '1';
+    const outDone = String(task.signBackStatus ?? '') === '1';
 
-    // 1) Check if there's a today task with times
+    // Server confirms both done
+    if (inDone && outDone) {
+      status.value = 'completed';
+      _executedSession.set(`1-${aid}`, Date.now());
+      _executedSession.set(`2-${aid}`, Date.now());
+      persistState();
+      addLog('检查', task.activityName || aid, true, '今日签到已完成');
+      return;
+    }
+
+    // -- Sign-in --
+    if (!inDone && !_executedSession.has(`1-${aid}`)) {
+      if (isTimeReached(task.signInTime)) {
+        const r = await execSign('1', task);
+        if (r.success) status.value = 'signed_in';
+        else if (r.networkError) status.value = 'monitoring';
+        else status.value = 'error';
+      } else {
+        status.value = 'monitoring';
+        addLog('检查', task.activityName || aid, true, `等待签到(${task.signInTime})`);
+      }
+      return;
+    }
+
+    // -- Sign-out --
+    if (inDone && !outDone && !_executedSession.has(`2-${aid}`)) {
+      const outTime = task.signBackTime || task.signBackLimitTime;
+      if (!outTime || isTimeReached(outTime)) {
+        const r = await execSign('2', task);
+        status.value = r.success ? 'completed' : 'error';
+      } else {
+        status.value = 'signed_in';
+      }
+      return;
+    }
+
+    status.value = 'completed';
+  } catch (e) {
+    console.error('[AutoSign] check error:', e);
+    status.value = 'error';
+    lastError.value = e.message;
+  }
+}
+
+/** Try to extract an array from various API response shapes */
+function extractList(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== 'object') return [];
+  const keys = ['records', 'list', 'rows', 'items', 'activityList'];
+  for (const key of keys) {
+    if (Array.isArray(raw[key])) return raw[key];
+  }
+  return [];
+}
+
+/** Try queryClubInfo for future dates to find registered activities */
+async function fetchRegisteredFromClubInfo() {
+  if (!_schoolIdRef?.value) {
+    console.warn('[AutoSign] no schoolId available');
+    return [];
+  }
+  const results = [];
+  const today = new Date();
+
+  // Fetch all 14 days concurrently
+  const promises = [];
+  for (let i = 0; i < 14; i++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + i);
+    const dateStr = formatDateForApi(date);
+    promises.push(
+      api.queryClubInfo({
+        queryTime: dateStr,
+        schoolId: _schoolIdRef.value,
+        studentId: _studentIdRef.value,
+        pageNo: 1,
+        pageSize: 20,
+      })
+        .then((resp) => ({ resp, dateStr }))
+        .catch((e) => {
+          console.warn(`[AutoSign] queryClubInfo ${dateStr} error:`, e);
+          return null;
+        }),
+    );
+  }
+
+  const settled = await Promise.allSettled(promises);
+  for (const result of settled) {
+    if (result.status !== 'fulfilled' || !result.value) continue;
+    const { resp, dateStr } = result.value;
+    const d = resp?.data;
+    if (d?.code !== 10000) continue;
+    const dayList = extractList(d.response);
+    for (const item of dayList) {
+      if (String(item.optionStatus) === '1') {
+        results.push(item);
+      }
+    }
+  }
+  return results;
+}
+
+/** Find next future registered activity and schedule wake-up */
+async function scheduleFuture() {
+  try {
+    let list = [];
+
+    // 1) Try queryMyPendingClub (user's registered activities)
     try {
-      const resp = await api.queryClubSignStatus(studentId.value);
+      const resp = await api.queryMyPendingClub(_studentIdRef.value, 1, 20);
       const d = resp?.data;
       if (d?.code === 10000) {
-        const task = d.response;
-        if (task?.activityId && task?.signInTime) {
-          const ms = msUntilTarget(task.signInTime);
-          const leadMs = Math.max(0, ms - LEAD_MINUTES * 60000);
+        list = extractList(d.response);
+      }
+    } catch (e) {
+      console.warn('[AutoSign] queryMyPendingClub failed, trying fallback', e);
+    }
 
-          if (leadMs > 0) {
-            // Sign-in is still ahead — wait until LEAD_MINUTES before
-            status.value = 'scheduled';
-            nextScheduledInfo.value = `今天 ${task.signInTime}`;
-            scheduleTimer = setTimeout(() => {
-              scheduleTimer = null;
-              startPolling();
-              checkAndExec();
-            }, leadMs);
-          } else {
-            // Already in the window — start monitoring now
-            startPolling();
-            checkAndExec();
-          }
-          return;
+    // 2) If empty, try queryClubInfo for upcoming dates
+    if (list.length === 0) {
+      list = await fetchRegisteredFromClubInfo();
+    }
+
+    if (list.length === 0) {
+      nextScheduledInfo.value = '暂无活动';
+      addLog('系统', '空闲', true, '当前没有已报名的活动');
+      return;
+    }
+
+    const now = Date.now();
+    let bestMs = Infinity;
+    let bestInfo = '';
+    let bestItem = null;
+    let foundAny = false;
+
+    for (const item of list) {
+      const date = parseYymmdd(item.yymmdd || item.activityDate || item.date || item.scheduleDate || '')
+        || parseMmdd(item.mmdd || '');
+      if (!date) continue;
+      const timeStr = item.startTime || item.activityStartTime || item.start || item.beginTime || '';
+      const st = parseTimeStr(timeStr);
+      if (!st) continue;
+      foundAny = true;
+
+      const monitorStart = new Date(date);
+      monitorStart.setHours(st.h, st.m, 0, 0);
+      monitorStart.setMinutes(monitorStart.getMinutes() - LEAD_MINUTES);
+      const ms = monitorStart.getTime() - now;
+      if (ms <= 0) continue;
+
+      if (ms < bestMs) {
+        bestMs = ms;
+        bestInfo = `${date.getMonth() + 1}-${date.getDate()} ${timeStr}`;
+        bestItem = { item, signTimeMs: monitorStart.getTime() + LEAD_MINUTES * 60000 };
+      }
+    }
+
+    if (bestMs < Infinity) {
+      nextScheduledInfo.value = bestInfo;
+      status.value = 'scheduled';
+      addLog('系统', '已计划', true, `将在 ${bestInfo} 自动签到`);
+      clearTimers();
+      _scheduleTimer = setTimeout(() => {
+        _scheduleTimer = null;
+        startPolling();
+        checkAndExec();
+      }, bestMs);
+
+      if (bestItem) {
+        const item = bestItem.item;
+        const aid = Number(item.clubActivityId || item.activityId || 0);
+        if (aid) {
+          scheduleTasksOnBackend([{
+            activityId: aid,
+            activityName: item.activityName || '',
+            signType: '1',
+            signTime: item.startTime || '',
+            targetTimestamp: bestItem.signTimeMs,
+            latitude: String(item.latitude || ''),
+            longitude: String(item.longitude || ''),
+          }]);
         }
       }
-    } catch (e) { /* fall through */ }
-
-    // 2) No active task today — look for future activities
-    await scheduleFuture();
+    } else {
+      nextScheduledInfo.value = foundAny ? '等签到时间' : '暂无活动';
+      addLog('系统', foundAny ? '等待中' : '空闲', true, foundAny ? '已报名活动，等待签到时间' : '当前没有已报名的活动');
+    }
+  } catch (e) {
+    console.error('[AutoSign] schedule future error:', e);
+    nextScheduledInfo.value = '查询失败';
+    addLog('系统', '错误', false, '查询已报名活动失败');
   }
+}
 
-  function stop() {
+function startPolling() {
+  if (_pollTimer) return;
+  status.value = 'monitoring';
+  _pollTimer = setInterval(checkAndExec, POLL_INTERVAL);
+}
+
+/** Main entry — decide what to do now */
+async function start() {
+  if (!canExec()) {
     enabled.value = false;
-    clearTimers();
-    cancelSwTasks();
-    status.value = 'idle';
-    nextScheduledInfo.value = '';
     persistState();
+    return;
   }
 
-  function toggle() {
-    if (enabled.value) stop();
-    else start();
+  enabled.value = true;
+  clearTimers();
+  persistState();
+
+  // 1) Check if there's a today task with times
+  try {
+    const resp = await api.queryClubSignStatus(_studentIdRef.value);
+    const d = resp?.data;
+    if (d?.code === 10000) {
+      const task = d.response;
+      if (task?.activityId && task?.signInTime) {
+        // Schedule today's sign-in on backend
+        const todayTasks = [{
+          activityId: Number(task.activityId),
+          activityName: task.activityName || '',
+          signType: '1',
+          signTime: task.signInTime,
+          targetTimestamp: buildTodayDate(task.signInTime).getTime(),
+          latitude: String(task.latitude || ''),
+          longitude: String(task.longitude || ''),
+        }];
+        const outTime = task.signBackTime || task.signBackLimitTime;
+        if (outTime) {
+          todayTasks.push({
+            activityId: Number(task.activityId),
+            activityName: task.activityName || '',
+            signType: '2',
+            signTime: outTime,
+            targetTimestamp: buildTodayDate(outTime).getTime(),
+            latitude: String(task.latitude || ''),
+            longitude: String(task.longitude || ''),
+          });
+        }
+        scheduleTasksOnBackend(todayTasks);
+
+        const ms = msUntilTarget(task.signInTime);
+        const leadMs = Math.max(0, ms - LEAD_MINUTES * 60000);
+
+        if (leadMs > 0) {
+          status.value = 'scheduled';
+          nextScheduledInfo.value = `今天 ${task.signInTime}`;
+          _scheduleTimer = setTimeout(() => {
+            _scheduleTimer = null;
+            startPolling();
+            checkAndExec();
+          }, leadMs);
+        } else {
+          startPolling();
+          checkAndExec();
+        }
+        return;
+      }
+    }
+  } catch (e) { /* fall through */ }
+
+  // 2) No active task today — look for future activities
+  status.value = 'scheduled';
+  await scheduleFuture();
+}
+
+function stop() {
+  enabled.value = false;
+  clearTimers();
+  cancelTasksOnBackend();
+  status.value = 'idle';
+  nextScheduledInfo.value = '';
+  persistState();
+}
+
+function clearTimers() {
+  if (_pollTimer) {
+    clearInterval(_pollTimer);
+    _pollTimer = null;
+  }
+  if (_scheduleTimer) {
+    clearTimeout(_scheduleTimer);
+    _scheduleTimer = null;
+  }
+}
+
+function toggle() {
+  if (enabled.value) stop();
+  else start();
+}
+
+/** Recalculate schedule (call after register/unregister) */
+async function refresh() {
+  if (!enabled.value) return;
+  clearTimers();
+  await start();
+}
+
+function clearLogs() {
+  signLog.value = [];
+}
+
+function resetExecuted() {
+  _executedSession.clear();
+  persistState();
+}
+
+// ---- composable ----
+
+export function useClubAutoSign(options = {}) {
+  // Lazy-init store refs (must be inside setup context for Pinia)
+  if (!_studentIdRef) {
+    const { studentId, token, schoolId } = useDataStore();
+    _studentIdRef = studentId;
+    _tokenRef = token;
+    _schoolIdRef = schoolId;
   }
 
-  /** Recalculate schedule (call after register/unregister) */
-  async function refresh() {
-    if (!enabled.value) return;
-    clearTimers();
-    await start();
-  }
-
-  function clearLogs() {
-    signLog.value = [];
-  }
-
-  function resetExecuted() {
-    executedInSession.clear();
-    persistState();
-  }
+  const { onSignResult } = options;
+  _onSignResult = onSignResult || null;
 
   // Auto-restart if was enabled before page refresh
   if (enabled.value) {
@@ -573,7 +593,10 @@ export function useClubAutoSign() {
     }, 100);
   }
 
-  onUnmounted(clearTimers);
+  onUnmounted(() => {
+    // Only detach UI callback — timers keep running for background monitoring
+    _onSignResult = null;
+  });
 
   return {
     enabled,

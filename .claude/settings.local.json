@@ -24,7 +24,12 @@
       "Read(//c/Java//**)",
       "Bash(netstat -ano)",
       "Bash(powershell -Command \"Stop-Process -Id 37052 -Force\")",
-      "Bash(echo \"Server PID: $!\")"
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(lsof -i:3000)",
+      "Bash(ps -p 14452 -o pid,comm)",
+      "Bash(tasklist)",
+      "Bash(findstr 14452)",
+      "Bash(kill %1)"
     ]
   }
 }

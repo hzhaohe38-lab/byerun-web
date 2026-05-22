@@ -477,7 +477,11 @@ const {
   clearLogs: clearAutoSignLogs,
   refresh: refreshAutoSign,
   checkAndExec: runAutoSignCheck,
-} = useClubAutoSign();
+} = useClubAutoSign({
+  onSignResult(success, msg) {
+    showMessage(msg, success ? 'success' : 'error');
+  },
+});
 
 let ensureAuthPromise = null;
 

@@ -29,6 +29,10 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/devproxy/, ''),
         },
+        '/api/auto-sign': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
         ...(env.VITE_AUTORUN_SERVER_BASE
           ? {
               '/autorunserver': {

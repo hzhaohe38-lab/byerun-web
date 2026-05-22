@@ -10,6 +10,9 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+
+# Vercel build output (generated from app/dist during vercel-build)
+server/public
 *.local
 
 # Editor directories and files
