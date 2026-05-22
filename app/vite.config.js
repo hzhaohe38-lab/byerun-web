@@ -24,10 +24,17 @@ export default defineConfig(({ mode }) => {
       allowedHosts: 'all',
       cors: true,
       proxy: {
-        '/devproxy': {
+        '/auth': {
           target: 'http://localhost:3000',
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/devproxy/, ''),
+        },
+        '/clubactivity': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
+        '/unirun': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
         },
         '/api/auto-sign': {
           target: 'http://localhost:3000',

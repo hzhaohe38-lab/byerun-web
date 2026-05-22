@@ -1,17 +1,9 @@
 ﻿const vBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
 
-const prodConfig = {
-  baseUrl: vBaseUrl,
-};
-
-const devConfig = {
-  baseUrl: '/devproxy',
-};
-
 export const appConfig = {
   appVersion: '1.8.3',
   api: {
-    ...(import.meta.env.PROD ? prodConfig : devConfig),
+    baseUrl: vBaseUrl,
     endpoints: {
       login: '/auth/login/password',
       token: '/auth/query/token',
