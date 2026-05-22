@@ -30,3 +30,4 @@ dist-ssr
 .history/
 
 __pycache__/
+.vercel

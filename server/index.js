@@ -1,6 +1,5 @@
 const express = require('express');
 const crypto = require('crypto');
-const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const morgan = require('morgan');
 const { createLogger, transports, format } = require('winston');
@@ -399,13 +398,6 @@ if (!isVercel) {
     }
   }, 600000);
 }
-
-// ---- Serve built frontend (Vue app in public/) ----
-app.use(express.static(path.join(__dirname, 'public')));
-// SPA fallback for direct navigation (browser refresh on /auth etc.)
-app.get('/auth', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 // ============================================================
 

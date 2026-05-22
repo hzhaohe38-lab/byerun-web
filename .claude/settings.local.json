@@ -29,7 +29,13 @@
       "Bash(ps -p 14452 -o pid,comm)",
       "Bash(tasklist)",
       "Bash(findstr 14452)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(npx vercel *)",
+      "Bash(vercel whoami *)",
+      "Bash(vercel deploy *)",
+      "Bash(vercel logs *)",
+      "Bash(vercel inspect *)",
+      "Bash(npm view *)"
     ]
   }
 }
