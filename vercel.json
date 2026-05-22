@@ -10,6 +10,11 @@
             "use": "@vercel/static"
         }
     ],
+    "functions": {
+        "api/proxy.js": {
+            "runtime": "edge"
+        }
+    },
     "routes": [
         {
             "src": "/assets/(.*)",
@@ -30,10 +35,6 @@
         {
             "src": "/api/auto-sign/(.*)",
             "dest": "server/index.js"
-        },
-        {
-            "src": "/api/proxy",
-            "dest": "/api/proxy"
         },
         {
             "src": "/(.*)",
