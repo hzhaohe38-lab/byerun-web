@@ -282,6 +282,7 @@ app.post('/api/auto-sign/exec-now', async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.230905.011)',
         appKey: AUTO_SIGN_APP_KEY,
         sign,
         ...(token ? { token } : {}),
@@ -407,18 +408,17 @@ app.all('*', async (req, res) => {
 
     logger.info(`Forwarding request to: ${backendUrl}`);
 
-    // Forward all headers except hop-by-hop headers and browser-specific referer
-    const forwardHeaders = {};
-    const skipHeaders = new Set([
-      'host', 'connection', 'keep-alive', 'transfer-encoding', 'expect',
-      'upgrade', 'proxy-authorization', 'proxy-authenticate',
-      'x-vercel-id', 'x-vercel-cache', 'x-vercel-trace',
-      'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
-      'x-real-ip', 'cf-connecting-ip', 'cf-ray', 'cf-worker',
-    ]);
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (!skipHeaders.has(key.toLowerCase()) && value) {
-        forwardHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
+    // Forward only the headers the TanMasports backend expects, plus
+    // set a mobile-app-like User-Agent so Alibaba WAF doesn't block.
+    const forwardHeaders = {
+      'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.230905.011)',
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+    const passThrough = ['content-type', 'appkey', 'sign', 'token'];
+    for (const key of passThrough) {
+      if (req.headers[key]) {
+        forwardHeaders[key] = req.headers[key];
       }
     }
 
