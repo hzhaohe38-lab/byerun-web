@@ -1,16 +1,9 @@
 {
     "version": 2,
-    "builds": [
-        {
-            "src": "server/index.js",
-            "use": "@vercel/node"
-        },
-        {
-            "src": "static/**/*",
-            "use": "@vercel/static"
-        }
-    ],
     "functions": {
+        "server/index.js": {
+            "runtime": "nodejs20.x"
+        },
         "api/proxy.js": {
             "runtime": "edge"
         }
@@ -18,23 +11,23 @@
     "routes": [
         {
             "src": "/assets/(.*)",
-            "dest": "static/assets/$1"
+            "dest": "/static/assets/$1"
         },
         {
             "src": "/favicon.ico",
-            "dest": "static/favicon.ico"
+            "dest": "/static/favicon.ico"
         },
         {
             "src": "/logo.png",
-            "dest": "static/logo.png"
+            "dest": "/static/logo.png"
         },
         {
             "src": "/",
-            "dest": "static/index.html"
+            "dest": "/static/index.html"
         },
         {
             "src": "/api/auto-sign/(.*)",
-            "dest": "server/index.js"
+            "dest": "/server/index.js"
         },
         {
             "src": "/(.*)",
