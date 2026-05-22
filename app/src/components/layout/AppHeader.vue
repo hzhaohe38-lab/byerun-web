@@ -41,7 +41,7 @@
                   :class="{ 'is-visible': welcomePhase !== 'text' }"
                 >
                   <img
-                    src="/logo.png"
+                    src="/img/touming1(2).png"
                     alt="App Logo"
                     class="max-h-full max-w-full object-contain"
                   />

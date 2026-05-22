@@ -6,6 +6,7 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 const morgan = require('morgan');
 const { createLogger, transports, format } = require('winston');
 
+const path = require('path');
 const app = express();
 const port = 3000;
 const isVercel = process.env.VERCEL === '1';
@@ -403,10 +404,26 @@ if (!isVercel) {
 }
 
 // ============================================================
+// Serve built frontend (local dev only — on Vercel, static files
+// are served by Vercel's infrastructure)
+// ============================================================
+if (!isVercel) {
+  const distPath = path.join(__dirname, '..', 'app', 'dist');
+  app.use(express.static(distPath));
+  // SPA fallback — serve index.html for Vue Router paths like /club
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') ||
+        req.path.startsWith('/clubactivity/') || req.path.startsWith('/unirun/')) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
+// ============================================================
 // Proxy all unmatched requests to the TanMasports backend
-// Uses Node.js built-in https module (instead of node-fetch) and
-// HTTP/1.1 to bypass Alibaba Cloud WAF IP-based blocking.
+// Uses Node.js built-in https module and HTTP/1.1
+// ============================================================
 app.all('*', async (req, res) => {
     const url = new URL(req.originalUrl, `http://${req.headers.host}`);
     const backendUrl = 'https://run-lb.tanmasports.com/v1' + url.pathname + url.search;

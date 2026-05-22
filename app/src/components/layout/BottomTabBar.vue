@@ -11,13 +11,13 @@
         type="button"
         :class="[
           'relative flex flex-col items-center justify-center bg-none border-0 cursor-pointer rounded-full transition-all duration-[300ms] outline-none flex-1 h-full',
-          active === item.key ? 'text-gray-100' : 'text-gray-300/80',
+          active === item.key ? 'text-cyan-200' : 'text-gray-300/80',
         ]"
         @click="handleClick(item)"
       >
         <div
           v-if="active === item.key"
-          class="absolute w-11 h-11 rounded-xl bg-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.1)] pointer-events-none"
+          class="absolute w-11 h-11 rounded-xl bg-cyan-400/15 border border-cyan-400/30 shadow-[0_8px_32px_rgba(0,0,0,0.1)] pointer-events-none"
         ></div>
 
         <div class="relative flex items-center justify-center w-6 h-6 z-10">
