@@ -1,9 +1,6 @@
 {
     "version": 2,
     "functions": {
-        "server/index.js": {
-            "runtime": "nodejs20.x"
-        },
         "api/proxy.js": {
             "runtime": "edge"
         }
@@ -26,7 +23,7 @@
             "dest": "/static/index.html"
         },
         {
-            "src": "/api/auto-sign/(.*)",
+            "src": "/api/auto-sign/?(.*)",
             "dest": "/server/index.js"
         },
         {
