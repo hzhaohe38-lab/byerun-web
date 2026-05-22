@@ -39,7 +39,11 @@
       "Bash(git commit *)",
       "Bash(git push *)",
       "Bash(vercel project *)",
-      "Bash(ping -c 2 byerun-web-gamma.vercel.app)"
+      "Bash(ping -c 2 byerun-web-gamma.vercel.app)",
+      "Bash(vercel list *)",
+      "Bash(grep *)",
+      "Bash(rm -rf \"../static\")",
+      "Bash(cp -r dist \"../static\")"
     ]
   }
 }
