@@ -28,16 +28,16 @@
             "dest": "static/index.html"
         },
         {
-            "src": "/auth",
-            "dest": "server/index.js"
-        },
-        {
             "src": "/api/auto-sign/(.*)",
             "dest": "server/index.js"
         },
         {
+            "src": "/api/proxy",
+            "dest": "/api/proxy"
+        },
+        {
             "src": "/(.*)",
-            "dest": "server/index.js"
+            "dest": "/api/proxy?path=$1"
         }
     ]
 }

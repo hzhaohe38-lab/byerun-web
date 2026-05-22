@@ -43,7 +43,12 @@
       "Bash(vercel list *)",
       "Bash(grep *)",
       "Bash(rm -rf \"../static\")",
-      "Bash(cp -r dist \"../static\")"
+      "Bash(cp -r dist \"../static\")",
+      "Bash(rg *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git rm *)",
+      "WebFetch(domain:byerun-web-pi.vercel.app)"
     ]
   }
 }
