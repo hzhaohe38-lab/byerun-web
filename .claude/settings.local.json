@@ -55,7 +55,11 @@
       "Bash(findstr /R \"IPv4\")",
       "Bash(findstr /V \"127.0.0.1\")",
       "Bash(findstr /R \"Ethernet IPv4\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(npx kill-port *)",
+      "Bash(awk '{print $5}')",
+      "Bash(python *)",
+      "Bash(awk '{print $NF}')"
     ]
   }
 }

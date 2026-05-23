@@ -6,9 +6,9 @@
       <div class="flex justify-between items-center mb-4">
         <div class="h-[24px] w-[24px]">
           <img
-            src="../assets/logo.png"
+            src="/img/touming1(2).png"
             alt="App Logo"
-            class="w-full h-full object-contain invert brightness-0 opacity-80 hover:brightness-0 hover:opacity-90"
+            class="w-full h-full object-contain brightness-0 invert opacity-60"
           />
         </div>
         <span class="text-sm text-gray-600 font-medium font-mono">氢氦跑</span>

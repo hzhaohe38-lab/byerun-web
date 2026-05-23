@@ -8,7 +8,8 @@ function readCssViewportHeight() {
 export function getViewportBaseHeight() {
   const cssHeight = readCssViewportHeight();
   if (cssHeight > 0) return cssHeight;
-  return window.innerHeight || document.documentElement?.clientHeight || 0;
+  // 优先 visualViewport 保证移动端精度（地址栏/键盘变化）
+  return window.visualViewport?.height || window.innerHeight || document.documentElement?.clientHeight || 0;
 }
 
 export function getViewportMetrics() {
