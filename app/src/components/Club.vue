@@ -152,10 +152,16 @@
             {{ autoSignLabel(autoSignStatus) }}
           </span>
           <span
-            v-if="autoSignStatus === 'scheduled' && nextScheduledInfo"
+            v-if="autoSignStatus === 'scheduled' && nextScheduledInfo && !countdownDisplay"
             class="text-[10px] text-gray-600"
           >
             {{ nextScheduledInfo }}
+          </span>
+          <span
+            v-if="autoSignStatus === 'scheduled' && countdownDisplay"
+            class="text-[10px] text-cyan-600"
+          >
+            {{ countdownDisplay }}
           </span>
         </div>
         <button
@@ -473,6 +479,7 @@ const {
   signLog: autoSignLog,
   lastError: autoSignError,
   nextScheduledInfo,
+  countdownDisplay,
   toggle: toggleAutoSign,
   clearLogs: clearAutoSignLogs,
   refresh: refreshAutoSign,

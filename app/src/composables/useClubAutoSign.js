@@ -15,9 +15,12 @@ const status = ref('idle');
 const signLog = ref([]);
 const lastError = ref('');
 const nextScheduledInfo = ref('');
+const countdownDisplay = ref('');
 
 let _pollTimer = null;
 let _scheduleTimer = null;
+let _countdownTimer = null;
+let _countdownTarget = null; // { type: 'sign_in'|'sign_back', ms: timestamp }
 const _executedSession = new Map(); // key -> timestamp
 let _onSignResult = null; // callback set by component for toast notifications
 
@@ -207,6 +210,66 @@ function canExec() {
   return !!(_studentIdRef?.value && _tokenRef?.value);
 }
 
+function setCountdownTarget(type, timeStr, baseDate) {
+  let target;
+  if (baseDate instanceof Date) {
+    const t = parseTimeStr(timeStr);
+    if (!t) { _countdownTarget = null; countdownDisplay.value = ''; return; }
+    target = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), t.h, t.m, t.s, 0);
+  } else {
+    target = buildTodayDate(timeStr);
+  }
+  if (!target) { _countdownTarget = null; countdownDisplay.value = ''; return; }
+  const ms = target.getTime();
+  if (ms - Date.now() > 24 * 60 * 60 * 1000) {
+    _countdownTarget = null;
+    countdownDisplay.value = '';
+    return;
+  }
+  _countdownTarget = { type, ms };
+}
+
+function clearCountdownTarget() {
+  _countdownTarget = null;
+  countdownDisplay.value = '';
+}
+
+function formatCountdown(remainingMs) {
+  const totalSec = Math.max(0, Math.floor(remainingMs / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}小时`);
+  if (m > 0) parts.push(`${m}分`);
+  parts.push(`${s}秒`);
+  return parts.join('');
+}
+
+function tickCountdown() {
+  if (!_countdownTarget) { countdownDisplay.value = ''; return; }
+  const remaining = _countdownTarget.ms - Date.now();
+  if (remaining <= 0) {
+    const label = _countdownTarget.type === 'sign_in' ? '签到' : '签退';
+    countdownDisplay.value = `${label}执行中...`;
+    return;
+  }
+  const label = _countdownTarget.type === 'sign_in' ? '签到' : '签退';
+  countdownDisplay.value = `将在${formatCountdown(remaining)}后执行${label}`;
+}
+
+function startCountdownTimer() {
+  if (_countdownTimer) return;
+  tickCountdown();
+  _countdownTimer = setInterval(tickCountdown, 1000);
+}
+
+function stopCountdownTimer() {
+  if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
+  _countdownTarget = null;
+  countdownDisplay.value = '';
+}
+
 async function execSign(signType, task) {
   const aid = Number(task.activityId);
   const key = `${signType}-${aid}`;
@@ -226,6 +289,10 @@ async function execSign(signType, task) {
       return { success: false, msg: '后端通信失败', networkError: true };
     }
     const ok = result.ok === true;
+    if (!ok) {
+      _executedSession.delete(key);
+      persistState();
+    }
     addLog(label, name, ok, result.msg || '');
     if (_onSignResult) {
       const msg = `${name} ${label}${ok ? '成功' : '失败'}${result.msg ? '：' + result.msg : ''}`;
@@ -248,13 +315,14 @@ async function checkAndExec() {
     const resp = await api.queryClubSignStatus(_studentIdRef.value);
     const d = resp?.data;
     if (d?.code !== 10000) {
+      clearCountdownTarget();
       return;
     }
 
     const task = d.response;
-    // Guard: if we already tracked completion, don't re-enter schedule
     if (status.value === 'completed' && !task) return;
     if (!task || !task.activityId || !task.signInTime) {
+      clearCountdownTarget();
       await scheduleFuture();
       return;
     }
@@ -269,7 +337,8 @@ async function checkAndExec() {
       _executedSession.set(`1-${aid}`, Date.now());
       _executedSession.set(`2-${aid}`, Date.now());
       persistState();
-      addLog('检查', task.activityName || aid, true, '今日签到已完成');
+      clearCountdownTarget();
+      addLog('检查', task.activityName || aid, true, '今日签到签退已完成');
       return;
     }
 
@@ -277,14 +346,10 @@ async function checkAndExec() {
     if (!inDone && !_executedSession.has(`1-${aid}`)) {
       if (isTimeReached(task.signInTime)) {
         const r = await execSign('1', task);
-        if (r.success) status.value = 'signed_in';
-        else if (r.networkError) status.value = 'monitoring';
-        else status.value = 'error';
+        if (!r.success) { status.value = 'error'; clearCountdownTarget(); return; }
       } else {
-        status.value = 'monitoring';
         addLog('检查', task.activityName || aid, true, `等待签到(${task.signInTime})`);
       }
-      return;
     }
 
     // -- Sign-out --
@@ -292,18 +357,27 @@ async function checkAndExec() {
       const outTime = task.signBackTime || task.signBackLimitTime;
       if (!outTime || isTimeReached(outTime)) {
         const r = await execSign('2', task);
-        status.value = r.success ? 'completed' : 'error';
-      } else {
-        status.value = 'signed_in';
+        if (!r.success) { status.value = 'error'; clearCountdownTarget(); return; }
       }
-      return;
     }
 
-    status.value = 'completed';
+    // -- Set countdown for the next pending action --
+    if (!inDone) {
+      setCountdownTarget('sign_in', task.signInTime);
+    } else if (!outDone) {
+      const outTime = task.signBackTime || task.signBackLimitTime;
+      if (outTime) setCountdownTarget('sign_back', outTime);
+      else clearCountdownTarget();
+    } else {
+      clearCountdownTarget();
+    }
+
+    status.value = 'scheduled';
   } catch (e) {
     console.error('[AutoSign] check error:', e);
     status.value = 'error';
     lastError.value = e.message;
+    clearCountdownTarget();
   }
 }
 
@@ -416,7 +490,7 @@ async function scheduleFuture() {
       if (ms < bestMs) {
         bestMs = ms;
         bestInfo = `${date.getMonth() + 1}-${date.getDate()} ${timeStr}`;
-        bestItem = { item, signTimeMs: monitorStart.getTime() + LEAD_MINUTES * 60000 };
+        bestItem = { item, date, signTimeMs: monitorStart.getTime() + LEAD_MINUTES * 60000 };
       }
     }
 
@@ -432,10 +506,16 @@ async function scheduleFuture() {
       }, bestMs);
 
       if (bestItem) {
+        const startTimeStr = bestItem.item.startTime || bestItem.item.activityStartTime || '';
+        if (startTimeStr) {
+          setCountdownTarget('sign_in', startTimeStr, bestItem.date);
+          startCountdownTimer();
+        }
+
         const item = bestItem.item;
         const aid = Number(item.clubActivityId || item.activityId || 0);
         if (aid) {
-          scheduleTasksOnBackend([{
+          const tasks = [{
             activityId: aid,
             activityName: item.activityName || '',
             signType: '1',
@@ -443,7 +523,24 @@ async function scheduleFuture() {
             targetTimestamp: bestItem.signTimeMs,
             latitude: String(item.latitude || ''),
             longitude: String(item.longitude || ''),
-          }]);
+          }];
+          const outTime = item.signBackTime || item.signBackLimitTime || item.endTime;
+          if (outTime) {
+            const t = parseTimeStr(outTime);
+            if (t) {
+              const outTarget = new Date(bestItem.date.getFullYear(), bestItem.date.getMonth(), bestItem.date.getDate(), t.h, t.m, t.s || 0, 0);
+              tasks.push({
+                activityId: aid,
+                activityName: item.activityName || '',
+                signType: '2',
+                signTime: outTime,
+                targetTimestamp: outTarget.getTime(),
+                latitude: String(item.latitude || ''),
+                longitude: String(item.longitude || ''),
+              });
+            }
+          }
+          scheduleTasksOnBackend(tasks);
         }
       }
     } else {
@@ -459,7 +556,6 @@ async function scheduleFuture() {
 
 function startPolling() {
   if (_pollTimer) return;
-  status.value = 'monitoring';
   _pollTimer = setInterval(checkAndExec, POLL_INTERVAL);
 }
 
@@ -505,6 +601,7 @@ async function start() {
           });
         }
         scheduleTasksOnBackend(todayTasks);
+        setCountdownTarget('sign_in', task.signInTime);
 
         const ms = msUntilTarget(task.signInTime);
         const leadMs = Math.max(0, ms - LEAD_MINUTES * 60000);
@@ -521,6 +618,7 @@ async function start() {
           startPolling();
           checkAndExec();
         }
+        startCountdownTimer();
         return;
       }
     }
@@ -529,6 +627,7 @@ async function start() {
   // 2) No active task today — look for future activities
   status.value = 'scheduled';
   await scheduleFuture();
+  startCountdownTimer();
 }
 
 function stop() {
@@ -549,6 +648,7 @@ function clearTimers() {
     clearTimeout(_scheduleTimer);
     _scheduleTimer = null;
   }
+  stopCountdownTimer();
 }
 
 function toggle() {
@@ -593,6 +693,8 @@ export function useClubAutoSign(options = {}) {
     }, 100);
   }
 
+  startCountdownTimer();
+
   onUnmounted(() => {
     // Only detach UI callback — timers keep running for background monitoring
     _onSignResult = null;
@@ -604,6 +706,7 @@ export function useClubAutoSign(options = {}) {
     signLog,
     lastError,
     nextScheduledInfo,
+    countdownDisplay,
     start,
     stop,
     toggle,
