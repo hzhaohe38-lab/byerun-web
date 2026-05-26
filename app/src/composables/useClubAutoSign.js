@@ -4,8 +4,8 @@ import { useDataStore } from './useDataStore';
 import { getSessionToken } from '@/utils/authStorage';
 
 const STORAGE_KEY = 'unirun.club_auto_sign';
-const POLL_INTERVAL = 30 * 1000;
-const LEAD_MINUTES = 30;
+const POLL_INTERVAL = 10 * 1000;
+const LEAD_MINUTES = 0;
 const AUTO_SIGN_API = '/api/auto-sign';
 
 // ---- module-level state (survives component unmount) ----
@@ -22,6 +22,7 @@ let _scheduleTimer = null;
 let _countdownTimer = null;
 let _countdownTarget = null; // { type: 'sign_in'|'sign_back', ms: timestamp }
 const _executedSession = new Map(); // key -> timestamp
+const _lastSignResult = new Map(); // key -> { success, msg } for tracking execution result within this session
 let _onSignResult = null; // callback set by component for toast notifications
 
 // Store refs (lazily set by composable in setup context — not at module level)
@@ -293,6 +294,7 @@ async function execSign(signType, task) {
       _executedSession.delete(key);
       persistState();
     }
+    _lastSignResult.set(key, { success: ok, msg: result.msg || '' });
     addLog(label, name, ok, result.msg || '');
     if (_onSignResult) {
       const msg = `${name} ${label}${ok ? '成功' : '失败'}${result.msg ? '：' + result.msg : ''}`;
@@ -328,8 +330,12 @@ async function checkAndExec() {
     }
 
     const aid = Number(task.activityId);
-    const inDone = String(task.signInStatus ?? '') === '1';
-    const outDone = String(task.signBackStatus ?? '') === '1';
+    let inDone = String(task.signInStatus ?? '') === '1';
+    let outDone = String(task.signBackStatus ?? '') === '1';
+
+    // Use local execution result if server hasn't updated yet
+    if (!inDone && _lastSignResult.get(`1-${aid}`)?.success) inDone = true;
+    if (!outDone && _lastSignResult.get(`2-${aid}`)?.success) outDone = true;
 
     // Server confirms both done
     if (inDone && outDone) {
@@ -544,8 +550,8 @@ async function scheduleFuture() {
         }
       }
     } else {
-      nextScheduledInfo.value = foundAny ? '等签到时间' : '暂无活动';
-      addLog('系统', foundAny ? '等待中' : '空闲', true, foundAny ? '已报名活动，等待签到时间' : '当前没有已报名的活动');
+      nextScheduledInfo.value = '暂无活动';
+      addLog('系统', '空闲', true, '暂无活动需要执行');
     }
   } catch (e) {
     console.error('[AutoSign] schedule future error:', e);
