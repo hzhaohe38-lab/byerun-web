@@ -352,7 +352,35 @@ async function checkAndExec() {
     if (!inDone && !_executedSession.has(`1-${aid}`)) {
       if (isTimeReached(task.signInTime)) {
         const r = await execSign('1', task);
-        if (!r.success) { status.value = 'error'; clearCountdownTarget(); return; }
+        if (!r.success) {
+          status.value = 'error';
+          addLog('系统', task.activityName || aid, false, '签到失败，10秒后重试');
+          return;
+        }
+
+        // After sign-in succeeds, stop polling
+        if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+
+        const outTime2 = task.signBackTime || task.signBackLimitTime;
+        if (outTime2 && !isTimeReached(outTime2)) {
+          // Has sign-back time in the future — schedule it
+          const ms = msUntilTarget(outTime2);
+          if (ms > 0) {
+            addLog('系统', task.activityName || aid, true, `签到成功，将在签退时间(${outTime2})自动签退`);
+            _scheduleTimer = setTimeout(() => {
+              _scheduleTimer = null;
+              startPolling();
+              checkAndExec();
+            }, ms);
+          }
+        } else {
+          // No sign-back time or already reached — mark done
+          addLog('系统', task.activityName || aid, true, '签到成功');
+          if (!outTime2) {
+            status.value = 'completed';
+            clearCountdownTarget();
+          }
+        }
       } else {
         addLog('检查', task.activityName || aid, true, `等待签到(${task.signInTime})`);
       }
@@ -368,7 +396,10 @@ async function checkAndExec() {
     }
 
     // -- Set countdown for the next pending action --
-    if (!inDone) {
+    // Use _executedSession as fallback: if we attempted sign-in (entry exists),
+    // treat it as done for countdown purposes, even if server hasn't updated yet.
+    const effectiveInDone = inDone || _executedSession.has(`1-${aid}`);
+    if (!effectiveInDone) {
       setCountdownTarget('sign_in', task.signInTime);
     } else if (!outDone) {
       const outTime = task.signBackTime || task.signBackLimitTime;
@@ -378,6 +409,7 @@ async function checkAndExec() {
       clearCountdownTarget();
     }
 
+    startCountdownTimer();
     status.value = 'scheduled';
   } catch (e) {
     console.error('[AutoSign] check error:', e);
@@ -607,22 +639,47 @@ async function start() {
           });
         }
         scheduleTasksOnBackend(todayTasks);
-        setCountdownTarget('sign_in', task.signInTime);
 
-        const ms = msUntilTarget(task.signInTime);
-        const leadMs = Math.max(0, ms - LEAD_MINUTES * 60000);
+        const inDone = String(task.signInStatus ?? '') === '1';
+        const outDone = String(task.signBackStatus ?? '') === '1';
+        const effectiveInDone = inDone || _executedSession.has(`1-${Number(task.activityId)}`);
 
-        if (leadMs > 0) {
-          status.value = 'scheduled';
-          nextScheduledInfo.value = `今天 ${task.signInTime}`;
-          _scheduleTimer = setTimeout(() => {
-            _scheduleTimer = null;
+        if (!effectiveInDone) {
+          // Sign-in not done yet
+          setCountdownTarget('sign_in', task.signInTime);
+          const ms = msUntilTarget(task.signInTime);
+          const leadMs = Math.max(0, ms - LEAD_MINUTES * 60000);
+          if (leadMs > 0) {
+            status.value = 'scheduled';
+            nextScheduledInfo.value = `今天 ${task.signInTime}`;
+            _scheduleTimer = setTimeout(() => {
+              _scheduleTimer = null;
+              startPolling();
+              checkAndExec();
+            }, leadMs);
+          } else {
             startPolling();
             checkAndExec();
-          }, leadMs);
+          }
+        } else if (!outDone && outTime) {
+          // Sign-in done, waiting for sign-back
+          setCountdownTarget('sign_back', outTime);
+          const ms = msUntilTarget(outTime);
+          if (ms > 0) {
+            status.value = 'scheduled';
+            _scheduleTimer = setTimeout(() => {
+              _scheduleTimer = null;
+              startPolling();
+              checkAndExec();
+            }, ms);
+          } else {
+            startPolling();
+            checkAndExec();
+          }
         } else {
-          startPolling();
-          checkAndExec();
+          // Both done
+          clearCountdownTarget();
+          status.value = 'completed';
         }
         startCountdownTimer();
         return;
