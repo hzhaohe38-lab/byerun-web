@@ -31,7 +31,9 @@ export function genSign(query = null, body = null) {
   const specialChars = [" ", "~", "!", "(", ")", "'"];
   for (const ch of specialChars) {
     if (signStr.includes(ch)) {
-      signStr = signStr.replace(new RegExp(ch, "g"), "");
+      // 转义正则元字符再构造，避免 "(" / ")" 使 new RegExp 抛错（与 server/index.js 一致）
+      const escaped = ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      signStr = signStr.replace(new RegExp(escaped, "g"), "");
       replaced = true;
     }
   }

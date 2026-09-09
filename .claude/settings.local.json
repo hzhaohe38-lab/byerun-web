@@ -59,7 +59,13 @@
       "Bash(npx kill-port *)",
       "Bash(awk '{print $5}')",
       "Bash(python *)",
-      "Bash(awk '{print $NF}')"
+      "Bash(awk '{print $NF}')",
+      "Bash(git -C /d/StudyProjects/byerun-web status --short)",
+      "Bash(git -C /d/StudyProjects/byerun-web diff --stat)",
+      "Bash(git -C /d/StudyProjects/byerun-web show HEAD:app/src/composables/useClubAutoSign.js)",
+      "Read(//tmp/**)",
+      "Read(//d/d/StudyProjects/byerun-web/app/**)",
+      "Read(//d/d/StudyProjects/byerun-web/app/src/**)"
     ]
   }
 }

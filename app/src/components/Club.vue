@@ -207,7 +207,7 @@
             <button
               type="button"
               class="text-[9px] text-cyan-700 hover:text-cyan-500 transition-colors"
-              @click="runAutoSignCheck"
+              @click="runAutoSignCheck(true)"
             >
               手动检查
             </button>
@@ -217,7 +217,7 @@
           <button
             type="button"
             class="text-[9px] text-cyan-700 hover:text-cyan-500 transition-colors"
-            @click="runAutoSignCheck"
+            @click="runAutoSignCheck(true)"
           >
             手动检查签到状态
           </button>
@@ -897,11 +897,11 @@ function resolveClubAction(item) {
 
   if (optionStatus === '2') {
     return {
-      type: 2,
+      type: 0,
       label: '活动进行中',
       pendingLabel: '活动进行中',
-      disabled: false,
-      buttonClass: 'bg-blue-500 hover:bg-blue-400',
+      disabled: true,
+      buttonClass: 'bg-blue-500/15 text-blue-200',
     };
   }
 
@@ -1435,7 +1435,7 @@ async function handleClubAction(item, type) {
 
     const data = response?.data;
     if (!isApiSuccess(data)) {
-      showMessage(data?.msg || data?.message || '娱乐部操作失败', 'error');
+      showMessage(data?.msg || data?.message || '俱乐部操作失败', 'error');
       return;
     }
 
@@ -1449,7 +1449,7 @@ async function handleClubAction(item, type) {
     refreshAutoSign();
   } catch (error) {
     console.error('handleClubAction failed:', error);
-    showMessage('娱乐部操作异常', 'error');
+    showMessage('俱乐部操作异常', 'error');
   } finally {
     setClubActionPending(actionKey, false);
   }

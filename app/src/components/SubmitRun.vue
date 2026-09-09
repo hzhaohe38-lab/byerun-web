@@ -545,7 +545,7 @@ loadMaps().then(async () => {
   cursor: pointer;
   transition: all 0.2s;
 }
-s .route-option.selected,
+.route-option.selected,
 .route-option:hover {
   background: #042f2e;
   color: #2dd4bf;
