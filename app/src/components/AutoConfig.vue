@@ -1,320 +1,245 @@
 <template>
-  <div v-if="props.inline || props.visible" :class="ui.wrapper" @click.self="handleWrapperClick">
-    <div :class="ui.panel">
-      <div v-if="pinging" :class="ui.feedback">
-        <i class="fa-brands fa-connectdevelop text-white text-3xl animate-bounce"></i>
-        <p class="text-[10px] text-stone-600 font-black tracking-[0.3em] uppercase">连接服务中</p>
+  <div class="w-full">
+    <div v-if="pinging" class="py-8 flex flex-col items-center justify-center space-y-3">
+      <i class="fa-brands fa-connectdevelop text-cyan-300 text-3xl animate-bounce"></i>
+      <p class="text-[10px] text-cyan-500/60 font-black tracking-[0.3em] uppercase">连接服务中</p>
+    </div>
+
+    <div v-else-if="initError" class="py-8 flex flex-col items-center justify-center space-y-3">
+      <i class="fa-solid fa-bomb text-red-400 text-3xl animate-pulse"></i>
+      <div class="text-center px-6">
+        <p class="text-cyan-200 text-xs font-bold">连接失败</p>
+        <p class="text-cyan-500/50 text-[10px] mt-1 line-clamp-2">{{ initError }}</p>
+      </div>
+      <button
+        type="button"
+        @click="init"
+        class="px-4 py-1.5 text-cyan-200 text-[11px] border border-dashed border-cyan-400/20 rounded-full hover:bg-cyan-500/10 transition-colors"
+      >
+        重新尝试
+      </button>
+    </div>
+
+    <div v-else class="space-y-4">
+      <div class="flex justify-between items-start gap-3">
+        <h2 class="text-sm font-semibold text-cyan-200">定时跑步</h2>
+        <div class="flex items-center gap-1.5 justify-end shrink-0">
+          <span :class="['text-[10px] font-black px-2 py-1 rounded-md border tracking-wide', enabledLabelClass]">
+            {{ enabledLabelText }}
+          </span>
+          <span :class="['text-[10px] font-black px-2 py-1 rounded-md border tracking-wide', statusLabelClass]">
+            {{ statusLabelText }}
+          </span>
+        </div>
       </div>
 
-      <div v-else-if="initError" :class="ui.feedback">
-        <div class="relative">
-          <i class="fa-solid fa-bomb text-red-500 text-4xl animate-pulse"></i>
-          <div class="absolute -inset-2 bg-red-500/20 blur-xl rounded-full"></div>
-        </div>
-        <div class="text-center px-6">
-          <p class="text-stone-200 text-xs font-bold">连接失败</p>
-          <p class="text-stone-500 text-[10px] mt-1 line-clamp-2">{{ initError }}</p>
-        </div>
-        <button
-          type="button"
-          @click="init"
-          class="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-stone-300 text-[10px] font-bold rounded-xl transition-colors"
-        >
-          重新尝试
-        </button>
-      </div>
-
-      <div v-else :class="ui.content">
-        <div :class="ui.header">
-          <div class="space-y-0.5">
-            <h2 class="text-sm font-black text-stone-200 uppercase tracking-widest">定时任务</h2>
-            <p class="text-[9px] text-stone-700 font-mono">{{ versionLabel }}</p>
+      <div class="space-y-3">
+        <div>
+          <div class="flex items-baseline justify-between gap-2 mb-1.5">
+            <label class="block text-sm text-cyan-200 font-medium shrink-0">学校地图</label>
+            <span class="text-[10px] text-cyan-500/50 font-mono truncate">{{ planLabel }}</span>
           </div>
-          <div class="flex items-center gap-2">
-            <span :class="['text-[10px] font-black px-2 py-1 rounded-lg border tracking-wide', enabledLabelClass]">
-              {{ enabledLabelText }}
-            </span>
-            <span :class="['text-[10px] font-black px-2 py-1 rounded-lg border tracking-wide', statusLabelClass]">
-              {{ statusLabelText }}
-            </span>
-          </div>
-        </div>
-
-        <div :class="ui.fields">
-          <div :class="ui.fieldItem">
-            <label class="text-[10px] font-black text-stone-600 uppercase tracking-widest ml-1">学校地图</label>
-            <div class="relative">
-              <div @click="showMapList = !showMapList" :class="ui.mapTrigger">
-                <span class="text-[12px] text-stone-200 font-medium">{{ currentMapName }}</span>
-                <i
-                  :class="[
-                    'fa-solid fa-chevron-down text-[10px] text-stone-600 transition-transform',
-                    showMapList ? 'rotate-180' : '',
-                  ]"
-                ></i>
-              </div>
+          <div
+            class="route-dropdown bg-cyan-950/60 border border-cyan-400/15 rounded-md p-2 cursor-pointer relative w-full box-border"
+            @click="mapsLoaded ? (showMapList = !showMapList) : null"
+          >
+            <div class="flex items-center justify-between text-sm text-cyan-200" :class="{ disabled: !mapsLoaded }">
+              <span v-if="!mapsLoaded">加载地图中...</span>
+              <span v-else>{{ currentMapName }}</span>
+              <div v-if="mapsLoaded" class="dropdown-arrow" :class="{ active: showMapList }"></div>
+            </div>
+            <div v-show="showMapList && mapsLoaded" class="route-options">
               <div
-                v-if="showMapList"
-                class="absolute z-50 w-full mt-1 bg-stone-900 border border-white/10 rounded-xl shadow-2xl py-1 max-h-[120px] overflow-y-auto"
+                v-for="map in maps"
+                :key="map.id"
+                class="route-option"
+                :class="{ selected: String(form.mapId) === String(map.id) }"
+                @click.stop="selectMap(map)"
               >
-                <div
-                  v-for="map in maps"
-                  :key="map.id"
-                  @click="selectMap(map)"
-                  class="px-4 py-2 text-[12px] text-stone-400 hover:bg-white/5 hover:text-white cursor-pointer transition-colors"
-                >
-                  {{ map.name }}
-                </div>
+                {{ map.name }}
               </div>
-            </div>
-          </div>
-
-          <div :class="ui.fieldItem">
-            <label class="text-[10px] font-black text-stone-600 uppercase tracking-widest ml-1">运行时间</label>
-            <div class="flex items-center gap-2">
-              <div class="flex-1 flex items-center bg-stone-900 border border-white/5 rounded-xl p-1">
-                <select
-                  v-model="timeObj.h"
-                  class="w-full bg-transparent text-center text-sm font-mono text-white outline-none appearance-none py-1"
-                >
-                  <option v-for="h in 24" :key="h - 1" :value="h - 1" class="bg-stone-900 text-white">
-                    {{ String(h - 1).padStart(2, '0') }}
-                  </option>
-                </select>
-                <span class="text-[9px] text-stone-600 pr-2 italic">H</span>
-              </div>
-              <span class="text-stone-800 font-bold">:</span>
-              <div class="flex-1 flex items-center bg-stone-900 border border-white/5 rounded-xl p-1">
-                <select
-                  v-model="timeObj.m"
-                  class="w-full bg-transparent text-center text-sm font-mono text-white outline-none appearance-none py-1"
-                >
-                  <option v-for="m in 60" :key="m - 1" :value="m - 1" class="bg-stone-900 text-white">
-                    {{ String(m - 1).padStart(2, '0') }}
-                  </option>
-                </select>
-                <span class="text-[9px] text-stone-600 pr-2 italic">M</span>
-              </div>
-            </div>
-          </div>
-
-          <div @click="form.enabled = !form.enabled" class="flex items-center justify-between p-1 cursor-pointer group">
-            <span class="text-[11px] font-bold text-stone-500 group-hover:text-stone-300 transition-colors">开启定时</span>
-            <div
-              :class="['w-9 h-5 rounded-full transition-all relative', form.enabled ? 'bg-stone-200' : 'bg-stone-800']"
-            >
-              <div
-                :class="[
-                  'absolute top-1 w-3 h-3 rounded-full transition-all',
-                  form.enabled ? 'left-5 bg-black' : 'left-1 bg-stone-500',
-                ]"
-              ></div>
+              <div v-if="!maps.length" class="route-option disabled">无可用地图</div>
             </div>
           </div>
         </div>
 
-        <button type="button" @click="handleSave" :disabled="submitting" :class="ui.saveButton">
-          <i v-if="submitting" class="fa-solid fa-circle-notch fa-spin"></i>
-          <span>{{ submitting ? 'SYNCING' : '保存配置' }}</span>
-        </button>
+        <div>
+          <label class="block text-sm text-cyan-200 mb-1.5 font-medium">随机时间窗</label>
+          <div class="flex items-center gap-2">
+            <TimeSelect v-model="timeStart" label="起" />
+            <span class="text-cyan-500/40 font-bold">—</span>
+            <TimeSelect v-model="timeEnd" label="止" />
+          </div>
+          <p class="text-[9px] text-cyan-500/50 ml-1 pt-1.5">
+            将在合理范围内随机抽取里程，并自动采用合理配速
+          </p>
+        </div>
+
+        <div @click="form.enabled = !form.enabled" class="flex items-center justify-between p-1 cursor-pointer group">
+          <span class="text-[11px] font-bold text-gray-500 group-hover:text-cyan-200 transition-colors">开启定时</span>
+          <div :class="['w-9 h-5 rounded-full transition-all relative', form.enabled ? 'bg-cyan-400' : 'bg-cyan-500/20']">
+            <div
+              :class="[
+                'absolute top-1 w-3 h-3 rounded-full transition-all',
+                form.enabled ? 'left-5 bg-cyan-950' : 'left-1 bg-cyan-300/70',
+              ]"
+            ></div>
+          </div>
+        </div>
+
+        <p class="text-[9px] leading-relaxed ml-1 text-orange-300/80">
+          开启后到点会自动提交，记录会写进你的跑步成绩。
+        </p>
+
+        <div v-if="status.configured && lastResult" class="border-t border-dashed border-cyan-400/15 pt-2 space-y-0.5">
+          <p class="text-[10px] text-cyan-500/50 uppercase tracking-widest font-black ml-1">最近一次</p>
+          <p :class="['text-[10px] ml-1 break-all', lastResult.ok ? 'text-emerald-400/90' : 'text-red-400/90']">
+            {{ lastResult.msg || '—' }}
+          </p>
+        </div>
       </div>
 
       <button
-        v-if="!props.inline"
         type="button"
-        @click="close"
-        class="absolute top-6 right-6 w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/5 text-stone-600 hover:text-white transition-all"
+        @click="handleSave"
+        :disabled="submitting"
+        class="w-full p-2 text-cyan-100 bg-cyan-500/10 border border-cyan-400/20 rounded-full hover:bg-cyan-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2"
       >
-        <i class="fa-solid fa-xmark text-sm"></i>
+        <i v-if="submitting" class="fa-solid fa-circle-notch fa-spin"></i>
+        <i v-else class="fa-solid fa-floppy-disk"></i>
+        <span>{{ submitting ? '保存中...' : '保存配置' }}</span>
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, inject } from 'vue';
-import { scheduledTaskConfig } from '@/utils/config';
+import { ref, reactive, computed, inject, onMounted, onUnmounted } from 'vue';
 import { useDataStore } from '@/composables/useDataStore';
-import { AutorunClient } from '@/composables/autorun-sdk';
-import { useAutorunPingMeta } from '@/composables/useAutorunPingMeta';
+import TimeSelect from '@/components/TimeSelect.vue';
 
-const props = defineProps({
-  visible: { type: Boolean, default: false },
-  inline: { type: Boolean, default: false },
+defineProps({
+  inline: { type: Boolean, default: true },
 });
-const emit = defineEmits(['update:visible', 'saved']);
+const emit = defineEmits(['saved']);
 const showMessage = inject('showMessage', (msg) => alert(msg));
 
-const { token } = useDataStore();
-const { pingMeta } = useAutorunPingMeta();
-const API_BASE = (scheduledTaskConfig.apiBaseUrl || '').replace(/\/$/, '');
-const autorunClient = new AutorunClient({ baseURL: API_BASE });
+const { token, userId, studentId, schoolId, runStandard, userInfo, submitRunRoute } = useDataStore();
+
+const API_ROOT = '/api/auto-run';
+const DEFAULT_WINDOW = { h: 8, m: 0 };
+const DEFAULT_WINDOW_END = { h: 22, m: 0 };
+const STATUS_POLL_MS = 15000;
 
 const pinging = ref(true);
 const initError = ref(null);
 const submitting = ref(false);
 const showMapList = ref(false);
-const serviceVersion = ref('--');
 
 const maps = ref([]);
-const status = ref(null);
-const form = ref({ map_id: '', enabled: false });
-const timeObj = reactive({ h: 8, m: 0 });
+const status = ref({ configured: false });
+const form = reactive({
+  mapId: '',
+  enabled: false,
+});
 
-const ui = computed(() =>
-  props.inline
-    ? {
-        wrapper: 'w-full',
-        panel: 'relative w-full bg-stone-950 border border-white/10 rounded-lg p-4',
-        feedback: 'py-8 flex flex-col items-center justify-center space-y-4',
-        content: 'p-4 space-y-4',
-        header: 'flex justify-between items-center gap-3',
-        fields: 'space-y-3',
-        fieldItem: 'space-y-1',
-        mapTrigger:
-          'flex items-center justify-between bg-stone-900 border border-white/5 rounded-xl px-3 py-2 cursor-pointer hover:border-white/10 transition-all',
-        saveButton:
-          'w-full bg-stone-800 hover:bg-stone-700 text-stone-200 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-[0.97] disabled:opacity-20 flex items-center justify-center gap-2',
-      }
-    : {
-        wrapper: 'fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md',
-        panel:
-          'relative w-full max-w-[300px] bg-stone-950 border border-white/10 rounded-[2rem] shadow-2xl transition-all overflow-hidden',
-        feedback: 'py-16 flex flex-col items-center justify-center space-y-4',
-        content: 'p-6 space-y-5',
-        header: 'flex justify-between items-center gap-3 pr-8',
-        fields: 'space-y-4',
-        fieldItem: 'space-y-1.5',
-        mapTrigger:
-          'flex items-center justify-between bg-stone-900 border border-white/5 rounded-xl px-4 py-2.5 cursor-pointer hover:border-white/10 transition-all',
-        saveButton:
-          'w-full bg-stone-800 hover:bg-stone-700 text-stone-200 py-3 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-[0.97] disabled:opacity-20 flex items-center justify-center gap-2',
-      },
+const timeStart = ref({ ...DEFAULT_WINDOW });
+const timeEnd = ref({ ...DEFAULT_WINDOW_END });
+
+let pollTimer = null;
+
+const mapsLoaded = computed(() => maps.value.length > 0);
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const toHm = ({ h, m }) => `${pad2(h)}:${pad2(m)}`;
+const toMinutes = ({ h, m }) => h * 60 + m;
+
+const parseHm = (value, fallback) => {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return { ...fallback };
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h > 23 || m > 59) return { ...fallback };
+  return { h, m };
+};
+
+const apiFetch = async (path, options = {}) => {
+  const resp = await fetch(`${API_ROOT}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  let payload = null;
+  try {
+    payload = await resp.json();
+  } catch (e) {
+    payload = null;
+  }
+  if (!resp.ok) {
+    throw new Error(payload?.msg || `服务端返回 ${resp.status}`);
+  }
+  return payload || {};
+};
+
+const currentMapName = computed(() => {
+  const selected = maps.value.find((m) => String(m.id) === String(form.mapId));
+  return selected ? selected.name : '—';
+});
+
+const planLabel = computed(() => {
+  if (!status.value.configured) return '尚未排程';
+  const today = status.value.today || {};
+  if (!status.value.config?.enabled) return '定时已关闭';
+  return `今日 ${pad2(today.hour || 0)}:${pad2(today.minute || 0)} · 约 ${today.distance || 0}m`;
+});
+
+const enabledLabelText = computed(() => (form.enabled ? '已启用' : '未启用'));
+const enabledLabelClass = computed(() =>
+  form.enabled
+    ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10'
+    : 'text-gray-500 border-stone-600/40 bg-stone-700/20',
 );
 
-const versionLabel = computed(() => {
-  const raw = String(serviceVersion.value || '--');
-  return `${raw.startsWith('v') ? raw : `v${raw}`} BETA`;
-});
-
-const getDatePart = (value) => {
-  const match = String(value || '').trim().match(/^\d{4}-\d{2}-\d{2}/);
-  return match ? match[0] : '';
-};
-
-const getTodayDatePart = () => {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
-};
-
-const isTruthyFlag = (value) => value === true || value === 1 || value === '1';
-
-const isCompletedToday = computed(() => {
-  const current = status.value || {};
-
-  if (current.executed !== undefined && current.executed !== null) {
-    return isTruthyFlag(current.executed);
-  }
-
-  const lastRunDate = getDatePart(current.last_run_at);
-  const lastRunAtToday = lastRunDate !== '' && lastRunDate === getTodayDatePart();
-
-  if (current.scheduled !== undefined && current.scheduled !== null) {
-    return isTruthyFlag(current.scheduled) && (lastRunAtToday || !current.last_run_at);
-  }
-
-  return lastRunAtToday;
-});
-
-const statusLabelText = computed(() => (isCompletedToday.value ? '已完成' : '待执行'));
+const lastResult = computed(() => status.value.lastResult || null);
+const statusLabelText = computed(() =>
+  status.value.executedToday ? '已完成' : status.value.configured ? '待执行' : '未配置',
+);
 const statusLabelClass = computed(() =>
-  isCompletedToday.value
+  status.value.executedToday
     ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
     : 'text-orange-300 border-orange-500/30 bg-orange-500/10',
 );
-const enabledLabelText = computed(() => (form.value.enabled ? '已启用' : '未启用'));
-const enabledLabelClass = computed(() =>
-  form.value.enabled
-    ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10'
-    : 'text-stone-400 border-stone-600/40 bg-stone-700/20',
-);
 
-const currentMapName = computed(() => {
-  const selectedId = String(form.value.map_id || '');
-  const map = maps.value.find((m) => String(m.id) === selectedId);
-  return map ? map.name : 'Loading...';
-});
+// fillForm is opt-in: the 15s poll must never write the form, or it would
+// silently revert edits the user hasn't saved yet.
+const applyStatus = (payload, { fillForm = false } = {}) => {
+  if (!payload || payload.code !== 10000) return;
+  status.value = payload;
+  maps.value = Array.isArray(payload.maps) ? payload.maps : [];
+  if (!fillForm) return;
 
-const selectMap = (map) => {
-  form.value.map_id = map.id;
-  showMapList.value = false;
-};
-
-const getAuthToken = () => {
-  const value = token.value || '';
-  if (!value) {
-    throw new Error('Missing auth token');
+  const cfg = payload.config;
+  if (payload.configured && cfg) {
+    form.mapId = cfg.mapId;
+    form.enabled = !!cfg.enabled;
+    Object.assign(timeStart.value, parseHm(cfg.windowStart, DEFAULT_WINDOW));
+    Object.assign(timeEnd.value, parseHm(cfg.windowEnd, DEFAULT_WINDOW_END));
+    return;
   }
-  return value;
+
+  // Not configured yet — seed sensible defaults.
+  // Prefer the map the user already runs on manually; the backend's map list is
+  // alphabetical, so maps[0] would otherwise be an unrelated school.
+  const lastRoute = String(submitRunRoute.value || '').trim();
+  form.mapId = maps.value.some((m) => m.id === lastRoute) ? lastRoute : maps.value[0]?.id || '';
+  form.enabled = false;
+  Object.assign(timeStart.value, DEFAULT_WINDOW);
+  Object.assign(timeEnd.value, DEFAULT_WINDOW_END);
 };
 
-const parseCronToTime = (cronExpr) => {
-  if (!cronExpr) return { h: 8, m: 0 };
-
-  const parts = String(cronExpr).trim().split(/\s+/);
-  if (parts.length < 2) return { h: 8, m: 0 };
-
-  const minute = Number(parts[0]);
-  const hour = Number(parts[1]);
-
-  return {
-    h: Number.isInteger(hour) ? Math.max(0, Math.min(23, hour)) : 8,
-    m: Number.isInteger(minute) ? Math.max(0, Math.min(59, minute)) : 0,
-  };
-};
-
-const applyInitPayload = ({ mapsData, configData, statusData, version }) => {
-  const list = Array.isArray(mapsData?.maps)
-    ? mapsData.maps
-    : Array.isArray(mapsData)
-      ? mapsData
-      : Array.isArray(mapsData?.list)
-        ? mapsData.list
-        : [];
-
-  maps.value = list;
-
-  const defaultMapId = mapsData?.default || mapsData?.default_map_id || list[0]?.id || '';
-  form.value.map_id = configData?.map_id || configData?.mapId || defaultMapId;
-
-  form.value.enabled = isTruthyFlag(configData?.enabled);
-
-  const { h, m } = parseCronToTime(configData?.cron_expr || configData?.cron);
-  timeObj.h = h;
-  timeObj.m = m;
-  status.value = statusData || null;
-  serviceVersion.value = version || serviceVersion.value || '--';
-};
-
-const fetchInitPayload = async () => {
-  if (!API_BASE) {
-    throw new Error('Scheduled task service URL is not configured');
-  }
-  const currentToken = getAuthToken();
-  const [mapsEnvelope, configEnvelope, statusEnvelope] = await Promise.all([
-    autorunClient.getMaps(),
-    autorunClient.getConfig(currentToken),
-    autorunClient.getStatus(currentToken),
-  ]);
-
-  return {
-    version: pingMeta.value?.version ? String(pingMeta.value.version) : '--',
-    mapsData: mapsEnvelope?.data,
-    configData: configEnvelope?.data,
-    statusData: statusEnvelope?.data,
-  };
+const refreshStatus = async () => {
+  if (!studentId.value) return;
+  const payload = await apiFetch(`/status?studentId=${encodeURIComponent(studentId.value)}`);
+  applyStatus(payload);
 };
 
 const init = async () => {
@@ -322,8 +247,9 @@ const init = async () => {
   initError.value = null;
 
   try {
-    const payload = await fetchInitPayload();
-    applyInitPayload(payload);
+    if (!studentId.value || !token.value) throw new Error('未登录，无法读取学号或登录凭证');
+    const payload = await apiFetch(`/status?studentId=${encodeURIComponent(studentId.value)}`);
+    applyStatus(payload, { fillForm: true });
   } catch (err) {
     console.error('AutoRun init error:', err);
     initError.value = err.message || 'Unknown error';
@@ -332,79 +258,132 @@ const init = async () => {
   }
 };
 
+const buildPayload = () => ({
+  studentId: studentId.value,
+  userId: userId.value,
+  token: token.value,
+  schoolId: schoolId.value,
+  gender: userInfo.value?.gender ?? userInfo.value?.sex ?? '',
+  runStandard: runStandard.value || {},
+  mapId: form.mapId,
+  windowStart: toHm(timeStart.value),
+  windowEnd: toHm(timeEnd.value),
+  enabled: form.enabled,
+});
+
 const handleSave = async () => {
-  if (!form.value.map_id) {
-    showMessage('Please select a map', 'error');
+  if (!form.mapId) {
+    showMessage('请选择学校地图', 'error');
+    return;
+  }
+  if (toMinutes(timeStart.value) >= toMinutes(timeEnd.value)) {
+    showMessage('结束时间需晚于开始时间', 'error');
     return;
   }
 
   submitting.value = true;
   try {
-    const currentToken = getAuthToken();
-    const cronExpr = String(timeObj.m) + ' ' + String(timeObj.h) + ' * * *';
-
-    await autorunClient.register(currentToken, {
-      map_id: form.value.map_id,
-      enabled: form.value.enabled ? 1 : 0,
-      cron: cronExpr,
+    const resp = await apiFetch('/config', {
+      method: 'POST',
+      body: JSON.stringify(buildPayload()),
     });
-
-    const latestStatusEnvelope = await autorunClient.getStatus(currentToken);
-    const latestStatus = latestStatusEnvelope?.data || null;
-    status.value = latestStatus;
-
-    showMessage('Settings updated', 'success');
+    applyStatus(resp, { fillForm: true });
+    // SubmitRun owns the save toast (its @saved handler); don't double up.
     emit('saved');
   } catch (err) {
-    showMessage(err.message || 'Save failed', 'error');
+    showMessage(err.message || '保存失败', 'error');
   } finally {
     submitting.value = false;
   }
 };
 
-const close = () => {
+const selectMap = (map) => {
+  form.mapId = map.id;
   showMapList.value = false;
-  emit('update:visible', false);
 };
 
-const handleWrapperClick = () => {
-  if (!props.inline) {
-    close();
-  }
-};
-
-watch(
-  () => ({ visible: props.visible, inline: props.inline }),
-  (current, previous) => {
-    const shouldInitInline = current.inline && !previous?.inline;
-    const shouldInitModal = current.visible && !previous?.visible;
-    if (shouldInitInline || shouldInitModal) {
-      init();
+onMounted(() => {
+  init();
+  // Keep the "最近一次 / 今日计划" readout fresh — the server executes
+  // independently of this page, so the panel only ever polls.
+  pollTimer = setInterval(() => {
+    if (!pinging.value && !initError.value && !submitting.value) {
+      refreshStatus().catch(() => {});
     }
-  },
-  { immediate: true },
-);
+  }, STATUS_POLL_MS);
+});
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer);
+});
 </script>
 
 <style scoped>
-select {
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background: transparent;
+.route-dropdown {
+  position: relative;
+  user-select: none;
+  box-sizing: border-box;
+  overflow: visible;
 }
 
-.overflow-y-auto::-webkit-scrollbar {
+.dropdown-arrow {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #22d3ee;
+  margin-left: 8px;
+  transition: transform 0.2s;
+}
+
+.dropdown-arrow.active {
+  transform: rotate(180deg);
+}
+
+.route-options {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 110%;
+  border-radius: 8px;
+  z-index: 9999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 4px 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.route-option {
+  padding: 8px 16px;
+  font-size: 13px;
+  background: #042f2e;
+  color: #2dd4bf;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.route-option.selected,
+.route-option:hover {
+  background: #042f2e;
+  color: #2dd4bf;
+}
+
+.route-option.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.route-options::-webkit-scrollbar {
   width: 4px;
 }
 
-.overflow-y-auto::-webkit-scrollbar-thumb {
-  background: #292524;
+.route-options::-webkit-scrollbar-thumb {
+  background: #115e59;
   border-radius: 10px;
 }
 
-option {
-  background-color: #0c0a09;
-  color: #e7e5e4;
+.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>
-

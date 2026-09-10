@@ -65,7 +65,30 @@
       "Bash(git -C /d/StudyProjects/byerun-web show HEAD:app/src/composables/useClubAutoSign.js)",
       "Read(//tmp/**)",
       "Read(//d/d/StudyProjects/byerun-web/app/**)",
-      "Read(//d/d/StudyProjects/byerun-web/app/src/**)"
+      "Read(//d/d/StudyProjects/byerun-web/app/src/**)",
+      "Read(//d/d/StudyProjects/**)",
+      "Read(//d/d/StudyProjects/byerun-web/**)",
+      "Bash(echo \"EXIT=$?\")",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_find",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_network_requests",
+      "mcp__playwright__browser_network_request",
+      "mcp__playwright__browser_evaluate",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_console_messages",
+      "Bash(wmic process *)",
+      "Bash(powershell *)",
+      "Bash(rm -f app/vite.preview.config.js autoconfig-oneline.png)",
+      "Bash(rm -rf app/.preview .playwright-mcp app/.playwright-mcp)",
+      "mcp__playwright__browser_select_option",
+      "Bash(sed -n '1,60p' src/composables/useApi.js)",
+      "Bash(sed -n '1,50p' src/composables/useApiRequestGate.js)",
+      "Bash(rm -f records-backdrop-fix.png records-tuned.png records-mirrored.png app/records-check.html app/vite.records-check.config.js app/src/records-check.js app/.records-mock.cjs)",
+      "Bash(rm -rf .playwright-mcp)",
+      "mcp__playwright__browser_close"
     ]
   }
 }

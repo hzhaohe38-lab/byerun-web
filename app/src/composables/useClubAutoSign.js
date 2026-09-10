@@ -42,14 +42,22 @@ let _schoolIdRef = null;
 
 // ---- time helpers ----
 
+// Accept both "HH:mm:ss" and full datetimes ("2026-09-11 07:30:01" / "...T07:30:01").
 function parseTimeStr(s) {
   if (!s) return null;
-  const parts = String(s).trim().split(':');
+  let str = String(s).trim();
+  const sp = str.lastIndexOf(' ');
+  if (sp >= 0) str = str.slice(sp + 1);
+  const t = str.lastIndexOf('T');
+  if (t >= 0) str = str.slice(t + 1);
+
+  const parts = str.split(':');
   if (parts.length < 2) return null;
-  const h = parseInt(parts[0]);
-  const m = parseInt(parts[1]);
-  if (isNaN(h) || isNaN(m)) return null;
-  return { h, m, s: parseInt(parts[2]) || 0 };
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+  const sec = parseInt(parts[2], 10);
+  return { h, m, s: isNaN(sec) ? 0 : sec };
 }
 
 function buildTodayDate(timeStr) {
@@ -408,7 +416,9 @@ function isTodayDriving(today) {
   const outDone = String(today.signBackStatus ?? '') === '1';
   if (inDone && outDone) return true;
   if (!inDone) return !!buildTodayDate(today.signInTime);
-  return !!buildTodayDate(today.signBackTime || today.signBackLimitTime);
+  return !!buildTodayDate(
+    today.signBackTime || today.signBackLimitTime || today.endTime || today.activityEndTime,
+  );
 }
 
 function recomputeDisplay(today) {
@@ -448,7 +458,7 @@ function recomputeDisplay(today) {
         return;
       }
     } else {
-      const outTime = today.signBackTime || today.signBackLimitTime;
+      const outTime = today.signBackTime || today.signBackLimitTime || today.endTime || today.activityEndTime;
       if (outTime) {
         const t = buildTodayDate(outTime);
         if (t) {
@@ -544,7 +554,7 @@ function ensureNextActionsScheduled(today) {
     }
   }
   if (!outDone && !have.has(`2-${aid}`)) {
-    const outTxt = today.signBackTime || today.signBackLimitTime;
+    const outTxt = today.signBackTime || today.signBackLimitTime || today.endTime || today.activityEndTime;
     const t = outTxt ? buildTodayDate(outTxt) : null;
     if (t) {
       add.push(normalizeTaskInput(aid, name, '2', outTxt, t.getTime(), today.latitude, today.longitude));
@@ -623,7 +633,7 @@ async function planToday(today) {
     }
   }
   if (!outDone) {
-    const outTime = today.signBackTime || today.signBackLimitTime;
+    const outTime = today.signBackTime || today.signBackLimitTime || today.endTime || today.activityEndTime;
     if (outTime) {
       const d = buildTodayDate(outTime);
       if (d) {

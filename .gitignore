@@ -31,3 +31,6 @@ dist-ssr
 
 __pycache__/
 .vercel
+
+# Runtime state (holds session token + today's plan)
+server/.auto-run-state.json

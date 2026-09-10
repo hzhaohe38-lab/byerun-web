@@ -40,6 +40,10 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:3000',
           changeOrigin: true,
         },
+        '/api/auto-run': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+        },
         ...(env.VITE_AUTORUN_SERVER_BASE
           ? {
               '/autorunserver': {

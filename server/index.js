@@ -7,6 +7,7 @@ const morgan = require('morgan');
 const { createLogger, transports, format } = require('winston');
 
 const path = require('path');
+const fs = require('fs');
 const app = express();
 const port = 3000;
 const isVercel = process.env.VERCEL === '1';
@@ -639,6 +640,318 @@ if (!isVercel) {
       if (doneLongAgo || createdLongAgo) _localTasks.delete(key);
     }
   }, 600000);
+}
+
+// ============================================================
+// Auto-run (定时跑步) — server-side executor
+//
+// Parallel to the club sign engine: the server plans ONE run per
+// calendar day (deterministic random time inside a window + random
+// distance inside a range), generates the track from the same campus
+// map data the browser uses, and submits it through the same
+// /unirun/save/run/record/new endpoint. The browser "one click run"
+// flow is untouched — this module only COPIES its math.
+//
+// Default mode is DRY-RUN: it plans and logs but does not submit.
+// ============================================================
+
+const autoRun = require('./auto-run');
+
+const AUTO_RUN_STATE_FILE = path.join(__dirname, '.auto-run-state.json');
+const AUTO_RUN_TICK_MS = 30 * 1000;
+const MAX_AUTO_RUN_ATTEMPTS = 5;
+// How late a planned run may still fire. Covers tick granularity and short
+// restarts; anything older is a slot that already went by, so skip it rather
+// than submit a run at some unrelated time of day.
+const AUTO_RUN_GRACE_MS = 10 * 60 * 1000;
+const AUTO_RUN_DEFAULT_WINDOW = { start: '08:00', end: '22:00' };
+
+let _autoRunConfigs = new Map(); // studentId -> config
+let _autoRunRuns = new Map();    // studentId -> { dateKey, executed, attempts, result }
+
+if (!isVercel) {
+  try {
+    if (fs.existsSync(AUTO_RUN_STATE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(AUTO_RUN_STATE_FILE, 'utf-8'));
+      _autoRunConfigs = new Map(Object.entries(raw.configs || {}));
+      _autoRunRuns = new Map(Object.entries(raw.runs || {}));
+      logger.info(`[AutoRun] restored ${_autoRunConfigs.size} config(s) from state file`);
+    }
+  } catch (e) {
+    logger.warn(`[AutoRun] state restore failed: ${e && e.message}`);
+  }
+}
+
+function persistAutoRunState() {
+  if (isVercel) return;
+  try {
+    fs.writeFileSync(
+      AUTO_RUN_STATE_FILE,
+      JSON.stringify({
+        configs: Object.fromEntries(_autoRunConfigs.entries()),
+        runs: Object.fromEntries(_autoRunRuns.entries()),
+      }, null, 2),
+    );
+  } catch (e) {
+    logger.error(`[AutoRun] state persist failed: ${e && e.message}`);
+  }
+}
+
+function toPositiveInt(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function toHm(value, fallback) {
+  if (typeof autoRun.parseHm(value, null) === 'number') return String(value).trim();
+  return fallback;
+}
+
+function normalizeAutoRunConfig(studentId, body = {}, prev = {}) {
+  const merged = { ...prev, ...body };
+  const windowStart = toHm(merged.windowStart, prev.windowStart || AUTO_RUN_DEFAULT_WINDOW.start);
+  const windowEnd = toHm(merged.windowEnd, prev.windowEnd || AUTO_RUN_DEFAULT_WINDOW.end);
+  const mapIds = autoRun.getAvailableMapIds();
+  const wantedMap = String(merged.mapId || prev.mapId || '').trim();
+  const mapId = mapIds.includes(wantedMap) ? wantedMap : mapIds[0] || 'default';
+
+  return {
+    studentId: String(studentId),
+    token: merged.token ? String(merged.token) : prev.token || '',
+    userId: merged.userId ? Number(merged.userId) : prev.userId || 0,
+    schoolId: merged.schoolId ? Number(merged.schoolId) : prev.schoolId || 0,
+    gender: merged.gender !== undefined ? String(merged.gender) : prev.gender || '',
+    runStandard: merged.runStandard && typeof merged.runStandard === 'object'
+      ? merged.runStandard : prev.runStandard || {},
+    mapId,
+    windowStart,
+    windowEnd,
+    enabled: merged.enabled !== undefined ? !!merged.enabled : prev.enabled !== false,
+    updatedAt: Date.now(),
+  };
+}
+
+// Distance/duration bounds come straight from the school standard — the exact
+// same resolveRunBoundsFromStandard() call the manual page's 随机 button uses,
+// so auto-run rolls the same distribution as clicking it by hand. No second
+// user-set range: that would be a second source of truth for the same thing.
+function resolveAutoRunTargets(cfg) {
+  const b = autoRun.resolveRunBoundsFromStandard({ gender: cfg.gender }, cfg.runStandard || {});
+  return { min: b.distanceMin, max: b.distanceMax, timeMin: b.timeMin, timeMax: b.timeMax };
+}
+
+function planForConfig(cfg) {
+  const targets = resolveAutoRunTargets(cfg);
+  return autoRun.pickDailyPlan({
+    studentId: cfg.studentId,
+    windowStart: cfg.windowStart,
+    windowEnd: cfg.windowEnd,
+    distanceMin: targets.min,
+    distanceMax: targets.max,
+  });
+}
+
+async function executeAutoRun(cfg, plan) {
+  const targets = resolveAutoRunTargets(cfg);
+  const payload = autoRun.buildRunPayload({
+    distance: plan.distance,
+    mapId: cfg.mapId,
+    bounds: { timeMin: targets.timeMin, timeMax: targets.timeMax },
+  });
+  if (!payload) throw new Error('轨迹生成失败（地图数据为空？）');
+
+  const now = new Date();
+  const summary = {
+    dateKey: plan.dateKey,
+    plannedTime: `${pad2(plan.hour)}:${pad2(plan.minute)}`,
+    mapId: payload.mapId,
+    distance: payload.distance,
+    runTime: payload.runTime,
+    pace: payload.pace,
+    trackPoints: JSON.parse(payload.trackPoints).length,
+    recordDate: autoRun.localDateKey(now),
+    yearSemester: autoRun.buildYearSemester(now),
+  };
+
+  if (!cfg.token || !cfg.userId) throw new Error('缺少 token/userId，无法提交');
+
+  const body = autoRun.buildRecordBody({
+    trackPoints: payload.trackPoints,
+    distance: payload.distance,
+    runTime: payload.runTime,
+    userId: cfg.userId,
+    recordDate: summary.recordDate,
+    yearSemester: summary.yearSemester,
+  });
+  logger.info(`[AutoRun] submit ${cfg.studentId}: ${summary.distance}m / ${summary.runTime}min / ${summary.pace}min/km / ${summary.trackPoints}pts @${summary.plannedTime}`);
+  const resp = await fetch(AUTO_SIGN_BACKEND + '/unirun/save/run/record/new', {
+    method: 'POST',
+    headers: authHeaders(null, body, cfg.token),
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  const ok = Number(data?.code) === 10000;
+  return { ok, msg: data?.msg || data?.message || (ok ? '提交成功' : '提交失败'), summary };
+}
+
+let _autoRunBusy = false;
+
+async function runDueAutoRuns() {
+  if (_autoRunBusy) return;
+  _autoRunBusy = true;
+  try {
+    const todayKey = autoRun.localDateKey();
+    for (const cfg of Array.from(_autoRunConfigs.values())) {
+      if (!cfg || !cfg.enabled) continue;
+      const sid = String(cfg.studentId);
+      const prev = _autoRunRuns.get(sid);
+      const sameDay = !!(prev && prev.dateKey === todayKey);
+      if (sameDay) {
+        // Already submitted today, or gave up after repeated failures.
+        if (prev.executed || prev.settled) continue;
+      }
+
+      const plan = planForConfig(cfg);
+      const lateness = Date.now() - plan.targetTimestamp;
+      if (lateness < 0) continue;
+      // Enabling the timer after today's slot has gone by must not fire a real
+      // submission the moment you hit save. A timer set for a time that already
+      // passed waits for the next occurrence.
+      if (lateness > AUTO_RUN_GRACE_MS) {
+        _autoRunRuns.set(sid, {
+          dateKey: todayKey,
+          executed: false,
+          settled: true,
+          attempts: 0,
+          result: { ok: false, msg: `已过今日执行时间（${pad2(plan.hour)}:${pad2(plan.minute)}），今日跳过`, time: new Date().toISOString() },
+        });
+        persistAutoRunState();
+        logger.info(`[AutoRun] ${sid} 跳过: 今日执行时间已过 ${lateness}ms`);
+        continue;
+      }
+
+      let result;
+      try {
+        const r = await executeAutoRun(cfg, plan);
+        result = { ok: r.ok, msg: r.msg, summary: r.summary, time: new Date().toISOString() };
+      } catch (e) {
+        result = { ok: false, msg: e && e.message ? e.message : '执行异常', time: new Date().toISOString() };
+      }
+
+      const attempts = (sameDay ? Number(prev.attempts || 0) : 0) + 1;
+      const gaveUp = !result.ok && attempts >= MAX_AUTO_RUN_ATTEMPTS;
+      if (gaveUp) result.msg = `连续失败已放弃：${result.msg}`;
+      _autoRunRuns.set(sid, {
+        dateKey: todayKey,
+        executed: !!result.ok,
+        settled: gaveUp,
+        attempts,
+        result,
+      });
+      persistAutoRunState();
+      logger.info(`[AutoRun] ${sid} ${result.ok ? '完成' : gaveUp ? '放弃' : '将重试'}: ${result.msg}`);
+    }
+  } finally {
+    _autoRunBusy = false;
+  }
+}
+
+function listAutoRunMaps() {
+  const names = autoRun.getMapNames();
+  return autoRun.getAvailableMapIds().map((id) => ({ id, name: names[id] || id }));
+}
+
+function buildAutoRunStatus(studentId) {
+  const sid = String(studentId || '');
+  const cfg = _autoRunConfigs.get(sid) || null;
+  if (!cfg) return { configured: false, maps: listAutoRunMaps() };
+  const plan = planForConfig(cfg);
+  const targets = resolveAutoRunTargets(cfg);
+  const run = _autoRunRuns.get(sid) || null;
+  const todayRun = run && run.dateKey === plan.dateKey ? run : null;
+  return {
+    configured: true,
+    config: cfg,
+    maps: listAutoRunMaps(),
+    effective: { min: targets.min, max: targets.max },
+    today: plan,
+    executedToday: !!(todayRun && todayRun.executed),
+    lastResult: todayRun ? todayRun.result : null,
+  };
+}
+
+// Save / update this student's auto-run configuration
+app.post('/api/auto-run/config', (req, res) => {
+  setCors(res);
+  try {
+    const { studentId } = req.body || {};
+    if (!studentId) return res.json({ code: 1, msg: 'studentId required' });
+    const sid = String(studentId);
+    const prev = _autoRunConfigs.get(sid) || {};
+    const cfg = normalizeAutoRunConfig(sid, req.body || {}, prev);
+    _autoRunConfigs.set(sid, cfg);
+
+    // If the calendar day rolled over, clear yesterday's done marker so the
+    // new day's plan can execute.
+    const run = _autoRunRuns.get(sid);
+    if (run && run.dateKey !== autoRun.localDateKey()) _autoRunRuns.delete(sid);
+
+    persistAutoRunState();
+    const eff = resolveAutoRunTargets(cfg);
+    logger.info(`[AutoRun] config saved ${sid}: ${cfg.mapId} ${cfg.windowStart}-${cfg.windowEnd} ${eff.min}-${eff.max} enabled=${cfg.enabled}`);
+    // Same flat envelope shape as GET /status so clients can reuse one parser.
+    res.json({ code: 10000, msg: 'saved', ...buildAutoRunStatus(sid) });
+  } catch (e) {
+    res.status(500).json({ code: 1, msg: e.message });
+  }
+});
+
+// Read-only status: today's planned time/distance + last execution result
+app.get('/api/auto-run/status', (req, res) => {
+  setCors(res);
+  try {
+    const { studentId } = req.query;
+    res.json({ code: 10000, ...buildAutoRunStatus(studentId) });
+  } catch (e) {
+    res.status(500).json({ code: 1, msg: e.message });
+  }
+});
+
+// Disable auto-run for a student
+app.post('/api/auto-run/cancel', (req, res) => {
+  setCors(res);
+  try {
+    const { studentId } = req.body || {};
+    const sid = String(studentId || '');
+    const cfg = _autoRunConfigs.get(sid);
+    if (cfg) {
+      cfg.enabled = false;
+      cfg.updatedAt = Date.now();
+      persistAutoRunState();
+    }
+    res.json({ code: 10000, msg: 'cancelled', ...buildAutoRunStatus(sid) });
+  } catch (e) {
+    res.status(500).json({ code: 1, msg: e.message });
+  }
+});
+
+// Vercel Cron handler — mirror of the sign cron
+app.get('/api/auto-run/cron', async (req, res) => {
+  if (isVercel && req.headers['x-vercel-cron'] !== '1') {
+    return res.status(401).json({ code: 1, msg: 'unauthorized' });
+  }
+  try {
+    await runDueAutoRuns();
+    res.json({ code: 10000, msg: 'ok' });
+  } catch (e) {
+    res.status(500).json({ code: 1, msg: e.message });
+  }
+});
+
+if (!isVercel) {
+  setInterval(() => {
+    runDueAutoRuns().catch((e) => logger.error(`[AutoRun] tick error: ${e && e.message}`));
+  }, AUTO_RUN_TICK_MS);
 }
 
 // ============================================================
