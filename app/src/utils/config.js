@@ -35,13 +35,7 @@ export const appConfig = {
   },
 };
 
-export const scheduledTaskConfig = {
-  apiBaseUrl: import.meta.env.DEV
-    ? '/autorunserver'
-    : import.meta.env.VITE_AUTORUN_SERVER_BASE || '',
-};
-
 export const urls = {
-  github: 'https://github.com/yanyaoli/byerun-web',
+  github: 'https://github.com/hzhaohe38-lab/byerun-web.git',
 };
 

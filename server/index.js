@@ -665,6 +665,7 @@ const MAX_AUTO_RUN_ATTEMPTS = 5;
 // than submit a run at some unrelated time of day.
 const AUTO_RUN_GRACE_MS = 10 * 60 * 1000;
 const AUTO_RUN_DEFAULT_WINDOW = { start: '08:00', end: '22:00' };
+const AUTO_RUN_DEFAULT_DISTANCE = { min: 1000, max: 5000 };
 
 let _autoRunConfigs = new Map(); // studentId -> config
 let _autoRunRuns = new Map();    // studentId -> { dateKey, executed, attempts, result }
@@ -707,6 +708,53 @@ function toHm(value, fallback) {
   return fallback;
 }
 
+// The school's accepted per-run distance window. It is the hard envelope for the
+// user's own random range — a distance outside it could be rejected or not count
+// as a valid run.
+//
+// Deliberately NOT resolveRunBoundsFromStandard(): that path pads both ends
+// (min+1, max+1001) for the manual 随机 button, so the auto-run defaults would
+// read as 1001/6001 instead of the school's own stated 1000/5000. The padding
+// stays where it belongs, on the manual path.
+function resolveDistanceEnvelope(runStandard, gender) {
+  const rs = runStandard || {};
+  const toNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+  const normalized = autoRun.normalizeGender(gender);
+  const boyMin = toNum(rs.boyOnceDistanceMin);
+  const girlMin = toNum(rs.girlOnceDistanceMin);
+  const boyMax = toNum(rs.boyOnceDistanceMax);
+  const girlMax = toNum(rs.girlOnceDistanceMax);
+
+  let min;
+  let max;
+  if (normalized === 'male') {
+    min = boyMin;
+    max = boyMax;
+  } else if (normalized === 'female') {
+    min = girlMin;
+    max = girlMax;
+  } else {
+    // Unknown gender — the widest window the standard offers.
+    const mins = [boyMin, girlMin].filter((v) => v > 0);
+    const maxs = [boyMax, girlMax].filter((v) => v > 0);
+    min = mins.length ? Math.min(...mins) : 0;
+    max = maxs.length ? Math.max(...maxs) : 0;
+  }
+
+  const lo = min > 0 ? min : AUTO_RUN_DEFAULT_DISTANCE.min;
+  const hi = max > 0 ? max : AUTO_RUN_DEFAULT_DISTANCE.max;
+  // A standard that collapses to a single point still needs room to draw from.
+  return hi > lo ? { min: lo, max: hi } : { min: lo, max: lo + 1 };
+}
+
+function clampToEnvelope(value, fallback, envelope) {
+  const n = toPositiveInt(value, fallback);
+  return Math.min(envelope.max, Math.max(envelope.min, n));
+}
+
 function normalizeAutoRunConfig(studentId, body = {}, prev = {}) {
   const merged = { ...prev, ...body };
   const windowStart = toHm(merged.windowStart, prev.windowStart || AUTO_RUN_DEFAULT_WINDOW.start);
@@ -714,30 +762,63 @@ function normalizeAutoRunConfig(studentId, body = {}, prev = {}) {
   const mapIds = autoRun.getAvailableMapIds();
   const wantedMap = String(merged.mapId || prev.mapId || '').trim();
   const mapId = mapIds.includes(wantedMap) ? wantedMap : mapIds[0] || 'default';
+  const runStandard = merged.runStandard && typeof merged.runStandard === 'object'
+    ? merged.runStandard : prev.runStandard || {};
+  const gender = merged.gender !== undefined ? String(merged.gender) : prev.gender || '';
+
+  // The user's own random-distance range, clamped into the school envelope.
+  // Defaulting each end to the envelope keeps behaviour identical for configs
+  // saved before this option existed.
+  const envelope = resolveDistanceEnvelope(runStandard, gender);
+  const wantedMin = clampToEnvelope(merged.distanceMin, envelope.min, envelope);
+  const wantedMax = clampToEnvelope(merged.distanceMax, envelope.max, envelope);
+  const rangeUsable = wantedMin < wantedMax;
 
   return {
     studentId: String(studentId),
     token: merged.token ? String(merged.token) : prev.token || '',
     userId: merged.userId ? Number(merged.userId) : prev.userId || 0,
     schoolId: merged.schoolId ? Number(merged.schoolId) : prev.schoolId || 0,
-    gender: merged.gender !== undefined ? String(merged.gender) : prev.gender || '',
-    runStandard: merged.runStandard && typeof merged.runStandard === 'object'
-      ? merged.runStandard : prev.runStandard || {},
+    gender,
+    runStandard,
     mapId,
     windowStart,
     windowEnd,
+    // A collapsed or inverted range carries no meaning — fall back to the
+    // full envelope rather than guessing which end the user meant.
+    distanceMin: rangeUsable ? wantedMin : envelope.min,
+    distanceMax: rangeUsable ? wantedMax : envelope.max,
     enabled: merged.enabled !== undefined ? !!merged.enabled : prev.enabled !== false,
     updatedAt: Date.now(),
   };
 }
 
-// Distance/duration bounds come straight from the school standard — the exact
-// same resolveRunBoundsFromStandard() call the manual page's 随机 button uses,
-// so auto-run rolls the same distribution as clicking it by hand. No second
-// user-set range: that would be a second source of truth for the same thing.
+// The user now picks the distance range; the school standard still supplies the
+// per-run duration bounds, so pace stays inside the 6-10 min/km clamp whatever
+// distance is chosen.
 function resolveAutoRunTargets(cfg) {
   const b = autoRun.resolveRunBoundsFromStandard({ gender: cfg.gender }, cfg.runStandard || {});
-  return { min: b.distanceMin, max: b.distanceMax, timeMin: b.timeMin, timeMax: b.timeMax };
+  // Duration bounds still come from the standard (they keep pace inside the
+  // 6-10 min/km clamp); the distance envelope is the school's stated range,
+  // unpadded, so it matches what the UI shows and stores.
+  const envelope = resolveDistanceEnvelope(cfg.runStandard, cfg.gender);
+
+  let min;
+  let max;
+  if (cfg.distanceMin === undefined || cfg.distanceMax === undefined) {
+    // Config predating the user-set range (or one whose standard just changed).
+    min = envelope.min;
+    max = envelope.max;
+  } else {
+    min = clampToEnvelope(cfg.distanceMin, envelope.min, envelope);
+    max = clampToEnvelope(cfg.distanceMax, envelope.max, envelope);
+    if (min >= max) {
+      min = envelope.min;
+      max = envelope.max;
+    }
+  }
+
+  return { min, max, envelope, timeMin: b.timeMin, timeMax: b.timeMax };
 }
 
 function planForConfig(cfg) {
@@ -874,6 +955,8 @@ function buildAutoRunStatus(studentId) {
     config: cfg,
     maps: listAutoRunMaps(),
     effective: { min: targets.min, max: targets.max },
+    // The school's accepted per-run range — the UI clamps the user's inputs to it.
+    envelope: targets.envelope,
     today: plan,
     executedToday: !!(todayRun && todayRun.executed),
     lastResult: todayRun ? todayRun.result : null,

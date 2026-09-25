@@ -183,7 +183,6 @@ import { submitRun as submitRunApi } from '@/composables/useRunSubmission';
 import { useRouteGenerator } from '@/composables/useRouteGenerator';
 import { useDataStore } from '@/composables/useDataStore';
 import { useApiRequestGate } from '@/composables/useApiRequestGate';
-import { waitForAutorunPingReady } from '@/composables/useAutorunPingMeta';
 import {
   calculatePaceMinutesPerKm,
   computeDurationFromDistance,
@@ -477,7 +476,6 @@ const onAutoConfigSaved = () => {
 
 const unlockMapRender = async () => {
   await waitForIdle();
-  await waitForAutorunPingReady();
   mapRenderUnlocked.value = true;
 };
 

@@ -3,7 +3,6 @@ import { useDataStore } from '@/composables/useDataStore';
 import { genTrackPoints } from '@/utils/track';
 import {
   computeDurationFromDistance,
-  normalizeRandomRunPayload,
   normalizeRoundedRunTime,
   resolveRunBoundsFromStandard,
 } from '@/utils/run';
@@ -19,28 +18,10 @@ const resolveSubmissionRoute = (route, fallbackRoute) => {
   return picked || 'default';
 };
 
-const pickPresetRun = (presetRun, dist, route, bounds) => {
-  const normalized = normalizeRandomRunPayload(presetRun, {
-    minDistance: bounds.distanceMin,
-    maxDistance: bounds.distanceMax,
-    requireTrack: true,
-  });
-  if (!normalized) return null;
-  if (normalized.run_distance !== dist) return null;
-
-  const presetMapId = String(normalized.map_id || '').trim();
-  if (presetMapId && presetMapId !== route) return null;
-
-  return {
-    runTime: normalized.run_time,
-    trackPoints: normalized.track_points,
-  };
-};
-
 /**
  * 提交跑步记录
- * @param {{ distance: number, route?: string, presetRun?: { map_id?: string, run_distance?: number, run_time?: number, track_points?: string } }} payload
- * @returns {Promise<{ok:true,data:any}|{ok:false,msg?:string,data?:any,error?:any,bounds?:{min:number,max:number}}>} 
+ * @param {{ distance: number, route?: string }} payload
+ * @returns {Promise<{ok:true,data:any}|{ok:false,msg?:string,data?:any,error?:any,bounds?:{min:number,max:number}}>}
  */
 export async function submitRun(payload = {}) {
   const dist = Number(payload?.distance);
@@ -62,10 +43,8 @@ export async function submitRun(payload = {}) {
 
   const route = resolveSubmissionRoute(payload?.route, submitRunRoute.value);
 
-  const presetRun = pickPresetRun(payload?.presetRun, dist, route, bounds);
-
-  let runTime = presetRun?.runTime || 0;
-  let trackPoints = presetRun?.trackPoints || '';
+  let runTime = 0;
+  let trackPoints = '';
 
   if (!runTime || !trackPoints) {
     const duration = computeDurationFromDistance(dist, {

@@ -46,7 +46,5 @@ export const clearAuthSessionStorage = () => {
     runInfo: null,
     runStandard: null,
     activityInfo: null,
-    chatUser: null,
-    chatUserId: null,
   }));
 };

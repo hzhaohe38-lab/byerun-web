@@ -1,10 +1,9 @@
 ﻿<template>
   <div class="h-full min-h-0 flex flex-col bg-transparent overflow-hidden">
-    <AppHeader v-show="activeKey !== 'chat'" ref="appHeaderRef" :scrolled="headerCompact" />
+    <AppHeader ref="appHeaderRef" :scrolled="headerCompact" />
 
     <div class="flex-1 flex flex-col min-h-0 w-full mx-auto p-0 relative bg-transparent">
       <main
-        v-show="activeKey !== 'chat'"
         ref="mainScrollRef"
         class="main-scroll-area relative overflow-y-auto w-full box-border px-4"
         :style="{
@@ -24,19 +23,11 @@
           <MyPage v-else-if="activeKey === 'my'" :key="'my'" />
         </keep-alive>
       </main>
-
-      <div v-show="activeKey === 'chat'" class="flex-1 min-h-0">
-        <keep-alive>
-          <ChatPage v-if="chatMounted" />
-        </keep-alive>
-      </div>
     </div>
 
     <BottomTabBar
-      v-show="activeKey !== 'chat'"
       ref="bottomBarRef"
       :active="activeKey"
-      :chat-unread="chatUnread"
       @update:active="setActiveKey"
     />
   </div>
@@ -47,18 +38,14 @@ import { ref, onMounted, onUnmounted, nextTick, watch, provide, inject } from 'v
 import RunRecords from '@/components/RunRecords.vue';
 import Club from '@/components/Club.vue';
 import SubmitRun from '@/components/SubmitRun.vue';
-import ChatPage from '@/views/ChatPage.vue';
 import AppHeader from '@/components/layout/AppHeader.vue';
 import BottomTabBar from '@/components/layout/BottomTabBar.vue';
 import MyPage from '@/views/MyPage.vue';
 import { useDataStore } from '@/composables/useDataStore';
 import { useApiRequestGate } from '@/composables/useApiRequestGate';
-import { preloadAutorunPingMeta } from '@/composables/useAutorunPingMeta';
-import { checkHasUnreadMessages } from '@/composables/useMessageReminder';
 import { getViewportMetrics } from '@/utils/viewport';
 
-const { fetchUserData, activeTab, userInfo, token, chatUnread, setChatUnread, markChatSeen } =
-  useDataStore();
+const { fetchUserData, activeTab, userInfo } = useDataStore();
 const { waitForIdle } = useApiRequestGate();
 const rootShowMessage = inject('showMessage', null);
 
@@ -71,8 +58,12 @@ const BOTTOM_BAR_CLEARANCE_GAP = 12;
 const headerHeight = ref(HEADER_RESERVED_SPACE);
 const bottomBarOverlayHeight = ref(DEFAULT_BOTTOM_BAR_OVERLAY_HEIGHT);
 const headerCompact = ref(false);
-const activeKey = ref(activeTab.value || 'submit');
-const chatMounted = ref(activeKey.value === 'chat');
+// Persisted `activeTab` may hold a value that no longer has a tab (e.g. a stale
+// 'chat' from before the message page was removed). Anything outside this list
+// would match no branch in <keep-alive> and render a blank main area.
+const VALID_TABS = ['club', 'records', 'submit', 'my'];
+const resolveValidTab = (key) => (VALID_TABS.includes(key) ? key : 'submit');
+const activeKey = ref(resolveValidTab(activeTab.value));
 let homeMeasureFrame = 0;
 
 function updateHeaderCompact(top) {
@@ -89,8 +80,8 @@ function handleMainScroll(event) {
 
 function setActiveKey(key) {
   if (!key || key === activeKey.value) return;
-  activeKey.value = key;
-  activeTab.value = key;
+  activeKey.value = resolveValidTab(key);
+  activeTab.value = activeKey.value;
 }
 
 function measureHeights() {
@@ -114,7 +105,7 @@ function scheduleMeasureHeights() {
 }
 
 function showMessage(message, type = 'info') {
-  if (activeKey.value !== 'chat' && appHeaderRef.value?.show) {
+  if (appHeaderRef.value?.show) {
     appHeaderRef.value.show(message, type);
     return;
   }
@@ -139,35 +130,20 @@ async function refreshUserData(options = { background: true }) {
   return false;
 }
 
-async function syncUnreadReminder() {
-  if (activeKey.value === 'chat') return;
-  const unread = await checkHasUnreadMessages(token.value || '');
-  setChatUnread(unread);
-}
-
 async function initializePage() {
   await refreshUserData({ background: false });
   await waitForIdle();
-  await preloadAutorunPingMeta();
-  await syncUnreadReminder();
 }
 
 async function handleRunSubmitted() {
   await refreshUserData({ background: true });
 }
 
-provide('goBack', () => setActiveKey('submit'));
 provide('showMessage', showMessage);
 
 watch(
   activeKey,
-  async (newKey) => {
-    if (newKey === 'chat') {
-      chatMounted.value = true;
-      markChatSeen();
-      return;
-    }
-
+  async () => {
     await nextTick();
     updateHeaderCompact(mainScrollRef.value?.scrollTop || 0);
     scheduleMeasureHeights();
@@ -176,10 +152,6 @@ watch(
 );
 
 onMounted(() => {
-  if (activeKey.value === 'chat') {
-    markChatSeen();
-  }
-
   initializePage().catch(() => {
     showMessage('用户数据刷新失败', 'warning');
   });

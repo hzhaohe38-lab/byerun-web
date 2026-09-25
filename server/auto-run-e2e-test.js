@@ -105,7 +105,7 @@ const hm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(m
   check('distance in range', cfg.today.distance >= cfg.effective.min && cfg.today.distance <= cfg.effective.max,
     `d=${cfg.today.distance} range=${cfg.effective.min}-${cfg.effective.max}`);
   check('maps exposed', Array.isArray(cfg.maps) && cfg.maps.some((m) => m.id === 'cuit_hkg' && m.name));
-  check('effective derived from school standard', cfg.effective.min === 2001 && cfg.effective.max === 10001,
+  check('effective = school stated range (no boundary padding)', cfg.effective.min === 2000 && cfg.effective.max === 9000,
     JSON.stringify(cfg.effective));
   check('no dryRun left in stored config', cfg.config.dryRun === undefined, String(cfg.config.dryRun));
   check('nothing submitted just by saving', captured.length === 0, `captured=${captured.length}`);
@@ -181,6 +181,72 @@ const hm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(m
   check('map/window persisted', rt.config.mapId === 'cuit_hkg' && rt.config.windowStart === '08:00' && rt.config.windowEnd === '22:00',
     `${rt.config.mapId} ${rt.config.windowStart}-${rt.config.windowEnd}`);
   check('disabled student stays disabled', rt.config.enabled === false, String(rt.config.enabled));
+
+  console.log('--- user-set distance range ---');
+  const RANGE_SID = '9010';
+  const rangeBase = {
+    studentId: RANGE_SID, userId: 570, token: 'tok-range', enabled: true, gender: '1',
+    runStandard: { boyOnceDistanceMin: 2000, boyOnceDistanceMax: 9000 },
+    mapId: 'cuit_hkg', windowStart: '08:00', windowEnd: '22:00',
+  };
+
+  // (a) no explicit range → full school envelope (back-compat with saved configs)
+  let rg = await post('/api/auto-run/config', { ...rangeBase });
+  const wideDistance = rg.today.distance;
+  const wideTarget = rg.today.targetTimestamp;
+  check('no range given → full school envelope',
+    rg.effective.min === 2000 && rg.effective.max === 9000, JSON.stringify(rg.effective));
+  // The school standard here says boyOnceDistanceMin 2000 / boyOnceDistanceMax
+  // 9000. resolveRunBoundsFromStandard() would pad these to 2001 / 10001 for the
+  // manual path; auto-run must report the school's own numbers instead.
+  check('envelope exposed for the UI to clamp against',
+    rg.envelope && rg.envelope.min === 2000 && rg.envelope.max === 9000, JSON.stringify(rg.envelope));
+
+  // (b) narrowing the range re-draws the distance. The narrow window is built to
+  // exclude wideDistance by construction, so this cannot pass by luck.
+  const narrowMin = wideDistance > 4000 ? 2000 : 8000;
+  const narrowMax = narrowMin + 500;
+  rg = await post('/api/auto-run/config', {
+    ...rangeBase, distanceMin: narrowMin, distanceMax: narrowMax,
+  });
+  check('explicit range becomes the effective range',
+    rg.effective.min === narrowMin && rg.effective.max === narrowMax, JSON.stringify(rg.effective));
+  check('distance re-drawn inside the explicit range',
+    rg.today.distance >= narrowMin && rg.today.distance <= narrowMax,
+    `d=${rg.today.distance} range=${narrowMin}-${narrowMax}`);
+  check('distance actually differs from the full-envelope draw',
+    rg.today.distance !== wideDistance, `${rg.today.distance} vs wide ${wideDistance}`);
+  // The time is drawn from the same seeded rng but before the distance, so
+  // changing only the distance range must not move the planned time.
+  check('changing the distance range does not move the planned time',
+    rg.today.targetTimestamp === wideTarget,
+    `${rg.today.targetTimestamp} vs ${wideTarget}`);
+
+  // (c) same calendar day → the plan is stable across reads and across the
+  // per-request re-planning that /status does. This is the "distance refreshes
+  // daily, not per request" contract.
+  const stable1 = await get(`/api/auto-run/status?studentId=${RANGE_SID}`);
+  await new Promise((r) => setTimeout(r, 1200));
+  const stable2 = await get(`/api/auto-run/status?studentId=${RANGE_SID}`);
+  check('same-day distance is stable across reads',
+    stable1.today.distance === stable2.today.distance && stable1.today.distance === rg.today.distance,
+    `${stable1.today.distance} / ${stable2.today.distance} / ${rg.today.distance}`);
+  check('same-day planned time is stable across reads',
+    stable1.today.targetTimestamp === stable2.today.targetTimestamp, `${stable1.today.targetTimestamp} vs ${stable2.today.targetTimestamp}`);
+
+  // (d) out-of-envelope input is clamped, not rejected outright
+  rg = await post('/api/auto-run/config', { ...rangeBase, distanceMin: 1, distanceMax: 999999 });
+  check('below-envelope min clamped up', rg.effective.min === 2000, JSON.stringify(rg.effective));
+  check('above-envelope max clamped down', rg.effective.max === 9000, JSON.stringify(rg.effective));
+  check('clamped draw stays inside the school envelope',
+    rg.today.distance >= 2000 && rg.today.distance <= 9000, `d=${rg.today.distance}`);
+
+  // (e) inverted range falls back to the envelope rather than guessing an end
+  rg = await post('/api/auto-run/config', { ...rangeBase, distanceMin: 5000, distanceMax: 3000 });
+  check('inverted range falls back to the full envelope',
+    rg.effective.min === 2000 && rg.effective.max === 9000, JSON.stringify(rg.effective));
+
+  await post('/api/auto-run/config', { studentId: RANGE_SID, enabled: false });
 
   console.log('--- persistence file ---');
   check('state file written', fs.existsSync(STATE_FILE));

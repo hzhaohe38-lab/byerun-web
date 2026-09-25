@@ -71,7 +71,27 @@
             <TimeSelect v-model="timeEnd" label="止" />
           </div>
           <p class="text-[9px] text-cyan-500/50 ml-1 pt-1.5">
-            将在合理范围内随机抽取里程，并自动采用合理配速
+            自动采用合理配速
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-sm text-cyan-200 mb-1.5 font-medium">里程范围</label>
+          <div class="flex items-center gap-2">
+            <DistanceInput
+              :model-value="form.distanceMin"
+              label="起"
+              @update:model-value="setDistanceMin"
+            />
+            <span class="text-cyan-500/40 font-bold">—</span>
+            <DistanceInput
+              :model-value="form.distanceMax"
+              label="止"
+              @update:model-value="setDistanceMax"
+            />
+          </div>
+          <p class="text-[9px] text-cyan-500/50 ml-1 pt-1.5">
+            每天按日期重新抽取 · 学校允许 {{ envelope.min }}–{{ envelope.max }}m
           </p>
         </div>
 
@@ -117,6 +137,7 @@
 import { ref, reactive, computed, inject, onMounted, onUnmounted } from 'vue';
 import { useDataStore } from '@/composables/useDataStore';
 import TimeSelect from '@/components/TimeSelect.vue';
+import DistanceInput from '@/components/DistanceInput.vue';
 
 defineProps({
   inline: { type: Boolean, default: true },
@@ -130,6 +151,10 @@ const API_ROOT = '/api/auto-run';
 const DEFAULT_WINDOW = { h: 8, m: 0 };
 const DEFAULT_WINDOW_END = { h: 22, m: 0 };
 const STATUS_POLL_MS = 15000;
+// Only used until the backend reports the school's real envelope. Kept separate
+// from @/utils/run's DEFAULT_DISTANCE_* — those carry the manual path's boundary
+// padding (1001 / 9000) and would show the wrong numbers here.
+const FALLBACK_DISTANCE = { min: 1000, max: 5000 };
 
 const pinging = ref(true);
 const initError = ref(null);
@@ -141,6 +166,8 @@ const status = ref({ configured: false });
 const form = reactive({
   mapId: '',
   enabled: false,
+  distanceMin: FALLBACK_DISTANCE.min,
+  distanceMax: FALLBACK_DISTANCE.max,
 });
 
 const timeStart = ref({ ...DEFAULT_WINDOW });
@@ -185,6 +212,28 @@ const currentMapName = computed(() => {
   return selected ? selected.name : '—';
 });
 
+// The school's accepted per-run distance range. Inputs are clamped into it so a
+// range that would produce an invalid record cannot be saved.
+const envelope = computed(() => {
+  const e = status.value?.envelope;
+  if (e && Number.isFinite(e.min) && Number.isFinite(e.max) && e.min < e.max) return e;
+  return { ...FALLBACK_DISTANCE };
+});
+
+const clampToEnvelope = (value, fallback) => {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(envelope.value.max, Math.max(envelope.value.min, n));
+};
+
+const setDistanceMin = (value) => {
+  form.distanceMin = clampToEnvelope(value, envelope.value.min);
+};
+
+const setDistanceMax = (value) => {
+  form.distanceMax = clampToEnvelope(value, envelope.value.max);
+};
+
 const planLabel = computed(() => {
   if (!status.value.configured) return '尚未排程';
   const today = status.value.today || {};
@@ -223,6 +272,8 @@ const applyStatus = (payload, { fillForm = false } = {}) => {
     form.enabled = !!cfg.enabled;
     Object.assign(timeStart.value, parseHm(cfg.windowStart, DEFAULT_WINDOW));
     Object.assign(timeEnd.value, parseHm(cfg.windowEnd, DEFAULT_WINDOW_END));
+    form.distanceMin = clampToEnvelope(cfg.distanceMin, envelope.value.min);
+    form.distanceMax = clampToEnvelope(cfg.distanceMax, envelope.value.max);
     return;
   }
 
@@ -234,6 +285,8 @@ const applyStatus = (payload, { fillForm = false } = {}) => {
   form.enabled = false;
   Object.assign(timeStart.value, DEFAULT_WINDOW);
   Object.assign(timeEnd.value, DEFAULT_WINDOW_END);
+  form.distanceMin = envelope.value.min;
+  form.distanceMax = envelope.value.max;
 };
 
 const refreshStatus = async () => {
@@ -268,6 +321,8 @@ const buildPayload = () => ({
   mapId: form.mapId,
   windowStart: toHm(timeStart.value),
   windowEnd: toHm(timeEnd.value),
+  distanceMin: form.distanceMin,
+  distanceMax: form.distanceMax,
   enabled: form.enabled,
 });
 
@@ -278,6 +333,10 @@ const handleSave = async () => {
   }
   if (toMinutes(timeStart.value) >= toMinutes(timeEnd.value)) {
     showMessage('结束时间需晚于开始时间', 'error');
+    return;
+  }
+  if (!(form.distanceMin < form.distanceMax)) {
+    showMessage('结束里程需大于起始里程', 'error');
     return;
   }
 

@@ -95,7 +95,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import { useDataStore } from '@/composables/useDataStore';
 import { urls } from '@/utils/config';
 
-const githubUrl = urls.github || 'https://github.com/yanyaoli/byerun-web';
+const githubUrl = urls.github || 'https://github.com/hzhaohe38-lab/byerun-web.git';
 
 const props = defineProps({
   scrolled: { type: Boolean, default: false },

@@ -22,65 +22,10 @@ const useAppStateStore = defineStore(
     const rememberLogin = ref(false);
     const savedPhone = ref('');
 
-    const chatUser = ref(null);
-    const chatUserId = ref(null);
-    const chatUnread = ref(false);
-    const chatLastSeenAt = ref('');
-
     const token = computed(() => userInfo.value?.oauthToken?.token || null);
     const userId = computed(() => userInfo.value?.userId || null);
     const studentId = computed(() => userInfo.value?.studentId || null);
     const schoolId = computed(() => userInfo.value?.schoolId || null);
-    const parseTimestamp = (value) => {
-      const timestamp = Date.parse(value || '');
-      return Number.isFinite(timestamp) ? timestamp : 0;
-    };
-
-    const setCachedChatUser = (user) => {
-      if (!user || typeof user !== 'object') {
-        chatUser.value = null;
-        chatUserId.value = null;
-        chatLastSeenAt.value = '';
-        return;
-      }
-      chatUser.value = user;
-      chatUserId.value =
-        user.user_id !== undefined && user.user_id !== null ? String(user.user_id) : null;
-      const userSeenAt = String(user.last_seen_at || '').trim();
-      if (!userSeenAt) return;
-      if (parseTimestamp(userSeenAt) > parseTimestamp(chatLastSeenAt.value)) {
-        chatLastSeenAt.value = userSeenAt;
-      }
-    };
-
-    const getCachedChatUserId = () => {
-      if (chatUserId.value) return chatUserId.value;
-      if (chatUser.value?.user_id !== undefined && chatUser.value?.user_id !== null) {
-        chatUserId.value = String(chatUser.value.user_id);
-        return chatUserId.value;
-      }
-      return null;
-    };
-
-    const setChatUnread = (value) => {
-      chatUnread.value = value === true;
-    };
-
-    const markChatSeen = (seenAt = new Date().toISOString()) => {
-      const normalizedSeenAt = String(seenAt || '').trim() || new Date().toISOString();
-      const finalSeenAt =
-        parseTimestamp(normalizedSeenAt) >= parseTimestamp(chatLastSeenAt.value)
-          ? normalizedSeenAt
-          : chatLastSeenAt.value;
-
-      chatUnread.value = false;
-      chatLastSeenAt.value = finalSeenAt;
-      if (!chatUser.value || typeof chatUser.value !== 'object') return;
-      chatUser.value = {
-        ...chatUser.value,
-        last_seen_at: finalSeenAt,
-      };
-    };
 
     const resolveFailureReason = (code, status) => {
       if (code === 10001 || status === 401 || status === 403) return 'auth_invalid';
@@ -161,9 +106,6 @@ const useAppStateStore = defineStore(
       runInfo.value = null;
       runStandard.value = null;
       activityInfo.value = null;
-      setCachedChatUser(null);
-      chatUnread.value = false;
-      chatLastSeenAt.value = '';
     };
 
     watch(
@@ -186,18 +128,10 @@ const useAppStateStore = defineStore(
       activeTab,
       rememberLogin,
       savedPhone,
-      chatUser,
-      chatUserId,
-      chatUnread,
-      chatLastSeenAt,
       token,
       userId,
       studentId,
       schoolId,
-      setCachedChatUser,
-      getCachedChatUserId,
-      setChatUnread,
-      markChatSeen,
       fetchUserData,
       clearAllData,
     };
@@ -217,9 +151,6 @@ const useAppStateStore = defineStore(
         'activeTab',
         'rememberLogin',
         'savedPhone',
-        'chatUser',
-        'chatUserId',
-        'chatLastSeenAt',
       ],
     },
   },
@@ -229,10 +160,6 @@ export const useDataStore = () => {
   const store = useAppStateStore();
   return {
     ...storeToRefs(store),
-    setCachedChatUser: store.setCachedChatUser,
-    getCachedChatUserId: store.getCachedChatUserId,
-    setChatUnread: store.setChatUnread,
-    markChatSeen: store.markChatSeen,
     fetchUserData: store.fetchUserData,
     clearAllData: store.clearAllData,
   };

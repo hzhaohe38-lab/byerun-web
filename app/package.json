@@ -20,7 +20,6 @@
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",
     "remixicon": "^4.9.0",
-    "socket.io-client": "^4.8.1",
     "tailwindcss": "^4.1.17",
     "vue": "^3.5.17",
     "vue-router": "^4.3.6"
